@@ -252,6 +252,11 @@ canvas#viz {
   align-items: center;
   justify-content: space-between;
 }
+.field-note {
+  font-size: 11px;
+  line-height: 1.35;
+  color: var(--text-dim);
+}
 select, input[type="text"], input[type="number"] {
   width: 100%;
   min-height: 32px;
@@ -380,16 +385,42 @@ input[type="checkbox"] { width: 16px; height: 16px; }
 
     <div class="settings-group">
       <h2>模型</h2>
+      <label class="field">性能档位
+        <select id="performanceProfile">
+          <option value="lightweight">轻量兼容</option>
+          <option value="extreme_gpu">GPU 极致性能</option>
+        </select>
+        <span class="field-note" id="performanceHint"></span>
+      </label>
       <label class="field">STT 模型
         <select id="sttModel">
           <option value="tiny">tiny</option>
           <option value="base">base</option>
           <option value="small">small</option>
           <option value="medium">medium</option>
+          <option value="large-v3">large-v3</option>
+        </select>
+      </label>
+      <label class="field">STT 设备
+        <select id="sttDevice">
+          <option value="cpu">cpu</option>
+          <option value="cuda">cuda</option>
+          <option value="auto">auto</option>
+        </select>
+      </label>
+      <label class="field">STT 精度
+        <select id="sttComputeType">
+          <option value="int8">int8</option>
+          <option value="int8_float16">int8_float16</option>
+          <option value="float16">float16</option>
+          <option value="auto">auto</option>
         </select>
       </label>
       <label class="field">TTS 音色<input id="ttsVoice" type="text"></label>
       <label class="field">Hermes 地址<input id="hermesBaseUrl" type="text"></label>
+      <label class="field">Hermes 模型<input id="hermesModel" type="text"></label>
+      <label class="field">最大回复 tokens<input id="hermesMaxTokens" type="number" min="64" max="4096" step="32"></label>
+      <label class="field">温度<input id="hermesTemperature" type="number" min="0" max="2" step="0.1"></label>
     </div>
 
     <div class="settings-group">
@@ -430,6 +461,7 @@ var chatHistory = []; // 多轮对话历史
 var settingsData = null;
 var devicesData = { inputs: [], outputs: [] };
 var statusData = null;
+var performanceProfiles = {};
 
 ws.onopen = () => console.log("WS connected");
 ws.onclose = () => {
@@ -494,12 +526,19 @@ function checkItem(label, ok, detail) {
 function collectChecks() {
   var deps = (statusData && statusData.dependencies) || {};
   var hermes = (statusData && statusData.hermes) || {};
+  var stt = (statusData && statusData.stt) || {};
+  var profile = (settingsData && settingsData.performance && settingsData.performance.profile) || "lightweight";
   return [
+    checkItem("性能档位", true, profile === "extreme_gpu" ? "GPU 极致性能" : "轻量兼容"),
     checkItem("ffmpeg", deps.ffmpeg, deps.ffmpeg_path || "未检测到"),
     checkItem("麦克风", devicesData.inputs.length > 0, devicesData.inputs.length + " 个输入设备"),
     checkItem("扬声器", devicesData.outputs.length > 0, devicesData.outputs.length + " 个输出设备"),
     checkItem("Hermes Gateway", hermes.reachable, hermes.base_url || "未配置"),
-    checkItem("STT", statusData && statusData.stt_ready, statusData && statusData.stt_ready ? "模型已就绪" : "模型预热中或失败"),
+    checkItem(
+      "STT",
+      statusData && statusData.stt_ready,
+      stt.model ? stt.model + " / " + stt.device + " / " + stt.compute_type : "模型预热中或失败"
+    ),
     checkItem("TTS", statusData && statusData.tts_ready, statusData && statusData.tts_ready ? "语音已就绪" : "模型预热中或失败")
   ];
 }
@@ -546,22 +585,52 @@ function fillDeviceSelect(select, devices, currentValue) {
 
 function renderSettings() {
   if (!settingsData) return;
+  var performance = settingsData.performance || {};
   var audio = settingsData.audio || {};
   var stt = settingsData.stt || {};
   var tts = settingsData.tts || {};
   var hermes = settingsData.hermes || {};
   var ui = settingsData.ui || {};
 
+  $("performanceProfile").value = performance.profile || "lightweight";
+  renderPerformanceHint();
   fillDeviceSelect($("inputDevice"), devicesData.inputs, audio.input_device);
   fillDeviceSelect($("outputDevice"), devicesData.outputs, audio.output_device);
   $("inputGain").value = audio.input_gain || 1;
   $("outputVolume").value = audio.output_volume || 1;
   $("vadThreshold").value = audio.vad_threshold || 0.012;
   $("sttModel").value = stt.model || "base";
+  $("sttDevice").value = stt.device || "cpu";
+  $("sttComputeType").value = stt.compute_type || "int8";
   $("ttsVoice").value = tts.voice || "zh-CN-XiaoxiaoNeural";
   $("hermesBaseUrl").value = hermes.base_url || "http://127.0.0.1:8642";
+  $("hermesModel").value = hermes.model || "hermes";
+  $("hermesMaxTokens").value = hermes.max_tokens || 300;
+  $("hermesTemperature").value = hermes.temperature || 0.7;
   $("alwaysOnTop").checked = !!ui.always_on_top;
   $("startMinimized").checked = !!ui.start_minimized;
+}
+
+function renderPerformanceHint() {
+  var profileName = $("performanceProfile").value || "lightweight";
+  var profile = performanceProfiles[profileName] || {};
+  $("performanceHint").textContent = profile.description || "";
+}
+
+function applyProfileToForm() {
+  var profile = performanceProfiles[$("performanceProfile").value];
+  if (!profile) return;
+  if (profile.stt) {
+    $("sttModel").value = profile.stt.model || "base";
+    $("sttDevice").value = profile.stt.device || "cpu";
+    $("sttComputeType").value = profile.stt.compute_type || "int8";
+  }
+  if (profile.hermes) {
+    $("hermesModel").value = profile.hermes.model || "hermes";
+    $("hermesMaxTokens").value = profile.hermes.max_tokens || 300;
+    $("hermesTemperature").value = profile.hermes.temperature || 0.7;
+  }
+  renderPerformanceHint();
 }
 
 function deviceValue(id) {
@@ -569,8 +638,16 @@ function deviceValue(id) {
   return value === "" ? null : Number(value);
 }
 
+function numberValue(id, fallback) {
+  var value = Number($(id).value);
+  return Number.isFinite(value) ? value : fallback;
+}
+
 function readSettingsForm() {
   return {
+    performance: {
+      profile: $("performanceProfile").value
+    },
     audio: {
       input_device: deviceValue("inputDevice"),
       output_device: deviceValue("outputDevice"),
@@ -579,13 +656,18 @@ function readSettingsForm() {
       vad_threshold: Number($("vadThreshold").value)
     },
     stt: {
-      model: $("sttModel").value
+      model: $("sttModel").value,
+      device: $("sttDevice").value,
+      compute_type: $("sttComputeType").value
     },
     tts: {
       voice: $("ttsVoice").value.trim() || "zh-CN-XiaoxiaoNeural"
     },
     hermes: {
-      base_url: $("hermesBaseUrl").value.trim() || "http://127.0.0.1:8642"
+      base_url: $("hermesBaseUrl").value.trim() || "http://127.0.0.1:8642",
+      model: $("hermesModel").value.trim() || "hermes",
+      max_tokens: numberValue("hermesMaxTokens", 300),
+      temperature: numberValue("hermesTemperature", 0.7)
     },
     ui: {
       always_on_top: $("alwaysOnTop").checked,
@@ -600,6 +682,7 @@ function refreshStatus() {
     apiGet("/api/devices").catch(function() { return { inputs: [], outputs: [] }; })
   ]).then(function(results) {
     statusData = results[0];
+    performanceProfiles = statusData.performance_profiles || {};
     devicesData = results[1];
     settingsData = statusData.settings;
     renderChecks("diagList");
@@ -731,6 +814,7 @@ document.getElementById("closeBtn").addEventListener("click", async () => {
   }
 });
 $("settingsBtn").addEventListener("click", openSettings);
+$("performanceProfile").addEventListener("change", applyProfileToForm);
 $("closeSettingsBtn").addEventListener("click", closeSettings);
 $("refreshStatusBtn").addEventListener("click", refreshStatus);
 $("saveSettingsBtn").addEventListener("click", saveSettings);

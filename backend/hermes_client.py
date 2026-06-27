@@ -21,12 +21,22 @@ class HermesClient:
 
     async def chat(self, message: str, history: list = None) -> str:
         """Send a single-turn or multi-turn message to Hermes gateway."""
+        from settings import load_settings
+
         history = history or []
+        hermes_settings = load_settings()["hermes"]
+        model = os.getenv("HERMES_MODEL", str(hermes_settings.get("model", "hermes")))
+        max_tokens = int(hermes_settings.get("max_tokens", 300))
+        temperature = float(hermes_settings.get("temperature", 0.7))
         try:
             messages = [
                 {
                     "role": "system",
-                    "content": "你是一个语音助手。请始终用中文回复。回复要简洁口语化，控制在3句话以内。不要用表情符号，像真人聊天一样自然说话。"
+                    "content": (
+                        "你是一个语音助手。请始终用中文回复。"
+                        "回复要简洁口语化，控制在3句话以内。"
+                        "不要用表情符号，像真人聊天一样自然说话。"
+                    ),
                 }
             ]
             # 加入历史对话
@@ -34,14 +44,14 @@ class HermesClient:
                 messages.append({"role": msg["role"], "content": msg["content"]})
             # 加入当前用户消息
             messages.append({"role": "user", "content": message})
-            
+
             resp = await self._client.post(
                 f"{self.base_url}/v1/chat/completions",
                 json={
-                    "model": "hermes",
+                    "model": model,
                     "messages": messages,
-                    "max_tokens": 300,
-                    "temperature": 0.7,
+                    "max_tokens": max_tokens,
+                    "temperature": temperature,
                 },
             )
             resp.raise_for_status()

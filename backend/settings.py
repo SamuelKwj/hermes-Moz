@@ -12,8 +12,44 @@ from app_runtime import get_app_dir
 APP_DIR = get_app_dir()
 SETTINGS_PATH = APP_DIR / "settings.json"
 
+PERFORMANCE_PROFILES: dict[str, dict[str, Any]] = {
+    "lightweight": {
+        "label": "轻量兼容",
+        "description": "适配绝大多数机器，优先稳定和低资源占用。",
+        "stt": {
+            "model": "base",
+            "device": "cpu",
+            "compute_type": "int8",
+            "beam_size": 5,
+        },
+        "hermes": {
+            "model": "hermes",
+            "max_tokens": 300,
+            "temperature": 0.7,
+        },
+    },
+    "extreme_gpu": {
+        "label": "GPU 极致性能",
+        "description": "面向高性能 NVIDIA GPU，优先准确率和响应上限。",
+        "stt": {
+            "model": "large-v3",
+            "device": "cuda",
+            "compute_type": "float16",
+            "beam_size": 5,
+        },
+        "hermes": {
+            "model": "hermes",
+            "max_tokens": 500,
+            "temperature": 0.7,
+        },
+    },
+}
+
 
 DEFAULT_SETTINGS: dict[str, Any] = {
+    "performance": {
+        "profile": "lightweight",
+    },
     "audio": {
         "input_device": None,
         "output_device": None,
@@ -26,8 +62,9 @@ DEFAULT_SETTINGS: dict[str, Any] = {
     "stt": {
         "model": "base",
         "language": "zh",
-        "device": "auto",
-        "compute_type": "auto",
+        "device": "cpu",
+        "compute_type": "int8",
+        "beam_size": 5,
     },
     "tts": {
         "voice": "zh-CN-XiaoxiaoNeural",
@@ -37,6 +74,9 @@ DEFAULT_SETTINGS: dict[str, Any] = {
     "hermes": {
         "base_url": "http://127.0.0.1:8642",
         "api_key": "bridge-secret-key",
+        "model": "hermes",
+        "max_tokens": 300,
+        "temperature": 0.7,
         "auto_start_gateway": True,
         "request_timeout_seconds": 90,
     },
@@ -80,6 +120,16 @@ def _known_settings(data: dict[str, Any]) -> dict[str, Any]:
     return known
 
 
+def apply_performance_profile(settings: dict[str, Any], profile_name: str) -> dict[str, Any]:
+    profile = PERFORMANCE_PROFILES.get(profile_name, PERFORMANCE_PROFILES["lightweight"])
+    merged = _deep_merge(settings, {
+        "performance": {"profile": profile_name if profile_name in PERFORMANCE_PROFILES else "lightweight"},
+        "stt": profile["stt"],
+        "hermes": profile["hermes"],
+    })
+    return _deep_merge(DEFAULT_SETTINGS, _known_settings(merged))
+
+
 def get_port(default: int = 8765) -> int:
     raw_port = os.getenv("VOICE_WIDGET_PORT", str(default))
     try:
@@ -107,7 +157,10 @@ def load_settings() -> dict[str, Any]:
     if not isinstance(data, dict):
         return deepcopy(DEFAULT_SETTINGS)
 
-    return _deep_merge(DEFAULT_SETTINGS, _known_settings(data))
+    merged = _deep_merge(DEFAULT_SETTINGS, _known_settings(data))
+    if "performance" not in data:
+        merged = apply_performance_profile(merged, "lightweight")
+    return merged
 
 
 def save_settings(settings: dict[str, Any]) -> dict[str, Any]:
@@ -121,4 +174,15 @@ def save_settings(settings: dict[str, Any]) -> dict[str, Any]:
 
 
 def patch_settings(patch: dict[str, Any]) -> dict[str, Any]:
-    return save_settings(_deep_merge(load_settings(), _known_settings(patch)))
+    known_patch = _known_settings(patch)
+    current = load_settings()
+    merged = _deep_merge(current, known_patch)
+    profile_name = (
+        known_patch.get("performance", {}).get("profile")
+        if isinstance(known_patch.get("performance"), dict)
+        else None
+    )
+    current_profile = current.get("performance", {}).get("profile")
+    if profile_name and profile_name != current_profile:
+        merged = apply_performance_profile(merged, str(profile_name))
+    return save_settings(merged)

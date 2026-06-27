@@ -17,7 +17,7 @@ from app_runtime import (
     prepend_bundled_bin_to_path,
 )
 from voice_pipeline import VoicePipeline
-from settings import get_host, get_port, load_settings, patch_settings
+from settings import PERFORMANCE_PROFILES, get_host, get_port, load_settings, patch_settings
 from system_checks import dependency_status, hermes_status, list_audio_devices, runtime_status
 
 prepend_bundled_bin_to_path()
@@ -50,6 +50,7 @@ async def _warm_stt_model():
 
         await asyncio.to_thread(_get_model)
         _stt_ready = True
+        _last_error = None
         logger.info("STT model ready.")
     except Exception:
         _last_error = "STT model warmup failed."
@@ -106,6 +107,8 @@ async def status():
         "dependencies": dependency_status(),
         "runtime": runtime_status(),
         "hermes": await hermes_status(settings),
+        "performance_profiles": PERFORMANCE_PROFILES,
+        "stt": _stt_status(),
         "settings": settings,
     }
 
@@ -117,7 +120,18 @@ async def get_settings():
 
 @app.post("/api/settings")
 async def update_settings(payload: dict):
-    return patch_settings(payload)
+    global _stt_ready, _last_error
+    before = load_settings()["stt"]
+    saved = patch_settings(payload)
+    after = saved["stt"]
+    if before != after:
+        from stt_engine import reset_model
+
+        reset_model()
+        _stt_ready = False
+        _last_error = None
+        asyncio.create_task(_warm_stt_model())
+    return saved
 
 
 @app.post("/api/setup/complete")
@@ -203,6 +217,15 @@ async def websocket_endpoint(ws: WebSocket):
 def main():
     import uvicorn
     uvicorn.run(app, host=get_host(), port=get_port(), log_level="info")
+
+
+def _stt_status() -> dict:
+    try:
+        from stt_engine import status as stt_status
+
+        return stt_status()
+    except Exception as exc:
+        return {"error": str(exc)}
 
 
 if __name__ == "__main__":
