@@ -13,6 +13,7 @@ import sounddevice as sd
 from stt_engine import transcribe
 from tts_engine import synthesize
 from hermes_client import HermesClient
+from settings import load_settings
 
 logger = logging.getLogger(__name__)
 
@@ -27,6 +28,7 @@ class VoicePipeline:
         self._recording = False
         self._frames: list[np.ndarray] = []
         self._level_callback = None
+        self._stream = None
 
     def set_level_callback(self, cb):
         self._level_callback = cb
@@ -34,27 +36,65 @@ class VoicePipeline:
     # ── recording ──────────────────────────────────────────────────
 
     def start_recording(self) -> None:
+        if self._recording:
+            raise RuntimeError("Already recording")
+
+        settings = load_settings()
+        audio_settings = settings["audio"]
+        input_device = audio_settings.get("input_device")
+
         self._frames = []
-        self._recording = True
         self._stream = sd.InputStream(
             samplerate=SAMPLE_RATE,
             channels=CHANNELS,
             dtype="float32",
             blocksize=int(SAMPLE_RATE * BLOCK_DURATION),
+            device=input_device,
             callback=self._audio_callback,
         )
-        self._stream.start()
+        try:
+            self._stream.start()
+            self._recording = True
+        except Exception:
+            self._stream.close()
+            self._stream = None
+            self._frames = []
+            self._recording = False
+            raise
 
     def stop_recording(self) -> str:
         """Stop, save WAV, return file path."""
+        if not self._recording and self._stream is None:
+            raise ValueError("No active recording")
+
         self._recording = False
-        self._stream.stop()
-        self._stream.close()
+        if self._stream is not None:
+            try:
+                self._stream.stop()
+            finally:
+                self._stream.close()
+                self._stream = None
 
         if not self._frames:
             raise ValueError("No audio captured")
 
+        settings = load_settings()
+        audio_settings = settings["audio"]
         audio = np.concatenate(self._frames)
+        gain = float(audio_settings.get("input_gain", 1.0))
+        if gain != 1.0:
+            audio = np.clip(audio * gain, -1.0, 1.0)
+
+        if audio_settings.get("vad_enabled", True):
+            rms = float(np.sqrt(np.mean(audio**2)))
+            threshold = float(audio_settings.get("vad_threshold", 0.012))
+            min_seconds = float(audio_settings.get("min_record_seconds", 0.35))
+            duration = len(audio) / SAMPLE_RATE
+            if duration < min_seconds:
+                raise ValueError("录音太短，请按住说完再松开。")
+            if rms < threshold:
+                raise ValueError("没有检测到清晰语音，请靠近麦克风或调低 VAD 阈值。")
+
         fd, path = tempfile.mkstemp(suffix=".wav", prefix="voice_")
         os.close(fd)
         with wave.open(path, "wb") as wf:
@@ -63,6 +103,16 @@ class VoicePipeline:
             wf.setframerate(SAMPLE_RATE)
             wf.writeframes((audio * 32767).astype(np.int16).tobytes())
         return path
+
+    def cancel_recording(self) -> None:
+        self._recording = False
+        if self._stream is not None:
+            try:
+                self._stream.stop()
+            finally:
+                self._stream.close()
+                self._stream = None
+        self._frames = []
 
     def _audio_callback(self, indata, frames, time_info, status):
         if status:
@@ -90,27 +140,44 @@ class VoicePipeline:
         logger.info("TTS saved: %s", mp3_path)
 
         # 4. Play
-        await self._play_audio(mp3_path)
+        try:
+            await self._play_audio(mp3_path)
+        finally:
+            try:
+                os.unlink(mp3_path)
+            except OSError:
+                pass
 
-        return {"user": text, "assistant": reply, "audio": mp3_path}
+        return {"user": text, "assistant": reply}
 
     async def _play_audio(self, path: str) -> None:
         """Play MP3 via ffmpeg decode + sounddevice."""
         import subprocess
         import tempfile
 
+        settings = load_settings()
+        audio_settings = settings["audio"]
+        output_device = audio_settings.get("output_device")
+        output_volume = float(audio_settings.get("output_volume", 1.0))
+
         fd, wav_path = tempfile.mkstemp(suffix=".wav")
         os.close(fd)
-        subprocess.run(
-            ["ffmpeg", "-y", "-i", path, "-f", "wav", "-acodec", "pcm_s16le",
-             "-ar", str(SAMPLE_RATE), "-ac", "1", wav_path],
-            capture_output=True, check=True,
-        )
+        try:
+            subprocess.run(
+                ["ffmpeg", "-y", "-i", path, "-f", "wav", "-acodec", "pcm_s16le",
+                 "-ar", str(SAMPLE_RATE), "-ac", "1", wav_path],
+                capture_output=True, check=True,
+            )
 
-        with wave.open(wav_path, "rb") as wf:
-            data = wf.readframes(wf.getnframes())
-            audio = np.frombuffer(data, dtype=np.int16).astype(np.float32) / 32767.0
-            sd.play(audio, wf.getframerate())
-            sd.wait()
-
-        os.unlink(wav_path)
+            with wave.open(wav_path, "rb") as wf:
+                data = wf.readframes(wf.getnframes())
+                audio = np.frombuffer(data, dtype=np.int16).astype(np.float32) / 32767.0
+                if output_volume != 1.0:
+                    audio = np.clip(audio * output_volume, -1.0, 1.0)
+                sd.play(audio, wf.getframerate(), device=output_device)
+                sd.wait()
+        finally:
+            try:
+                os.unlink(wav_path)
+            except OSError:
+                pass

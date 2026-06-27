@@ -13,6 +13,9 @@
     --text: #e0e0f0;
     --text-dim: #8888a0;
     --danger: #e74c3c;
+    --ok: #2ecc71;
+    --warn: #f39c12;
+    --line: rgba(255,255,255,0.1);
     --radius: 20px;
   }
   * { margin: 0; padding: 0; box-sizing: border-box; }
@@ -46,23 +49,46 @@
     pointer-events: none;
   }
   .header {
+    width: 100%;
     display: flex;
     align-items: center;
-    gap: 8px;
+    justify-content: space-between;
     font-size: 13px;
     color: var(--text-dim);
     letter-spacing: 0.04em;
     z-index: 1;
     -webkit-app-region: drag;
   }
+  .brand {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+  }
   .header .dot {
     width: 8px; height: 8px;
     border-radius: 50%;
-    background: #2ecc71;
-    box-shadow: 0 0 8px #2ecc71;
+    background: var(--ok);
+    box-shadow: 0 0 8px var(--ok);
     transition: all 0.3s;
   }
   .header .dot.off { background: #555; box-shadow: none; }
+  .icon-btn {
+    width: 28px; height: 28px;
+    border: 1px solid var(--line);
+    border-radius: 8px;
+    background: rgba(255,255,255,0.04);
+    color: var(--text);
+    cursor: pointer;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    -webkit-app-region: no-drag;
+  }
+  .icon-btn:hover { border-color: rgba(162,155,254,0.5); }
+  .icon-btn svg {
+    width: 16px; height: 16px;
+    fill: none; stroke: currentColor; stroke-width: 2;
+  }
   .viz-container {
     position: relative;
     width: 200px; height: 200px;
@@ -151,14 +177,140 @@
   }
   .status.recording { color: var(--danger); }
   .status.processing { color: #f39c12; }
+  .panel, .modal {
+    position: absolute;
+    inset: 0;
+    z-index: 5;
+    background: rgba(10,10,15,0.96);
+    backdrop-filter: blur(14px);
+    -webkit-app-region: no-drag;
+  }
+  .panel.hidden, .modal.hidden { display: none; }
+  .panel {
+    padding: 18px;
+    overflow-y: auto;
+  }
+  .panel-head, .modal-head {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    margin-bottom: 14px;
+  }
+  .panel-title, .modal-title {
+    font-size: 15px;
+    font-weight: 600;
+  }
+  .settings-group {
+    border-top: 1px solid var(--line);
+    padding-top: 12px;
+    margin-top: 12px;
+  }
+  .settings-group h2 {
+    font-size: 12px;
+    font-weight: 600;
+    color: var(--text-dim);
+    margin-bottom: 10px;
+  }
+  .field {
+    display: flex;
+    flex-direction: column;
+    gap: 6px;
+    margin-bottom: 10px;
+    font-size: 12px;
+    color: var(--text-dim);
+  }
+  .field.row {
+    flex-direction: row;
+    align-items: center;
+    justify-content: space-between;
+  }
+  select, input[type="text"], input[type="number"] {
+    width: 100%;
+    min-height: 32px;
+    border-radius: 8px;
+    border: 1px solid var(--line);
+    background: rgba(255,255,255,0.06);
+    color: var(--text);
+    padding: 6px 8px;
+    font: inherit;
+  }
+  input[type="range"] { width: 100%; }
+  input[type="checkbox"] { width: 16px; height: 16px; }
+  .actions {
+    display: flex;
+    gap: 8px;
+    margin-top: 14px;
+  }
+  .text-btn {
+    flex: 1;
+    min-height: 34px;
+    border-radius: 8px;
+    border: 1px solid var(--line);
+    background: rgba(255,255,255,0.06);
+    color: var(--text);
+    cursor: pointer;
+    font: inherit;
+  }
+  .text-btn.primary {
+    border-color: rgba(108,92,231,0.6);
+    background: rgba(108,92,231,0.28);
+  }
+  .check-list {
+    display: flex;
+    flex-direction: column;
+    gap: 8px;
+  }
+  .check-item {
+    display: grid;
+    grid-template-columns: 10px 1fr;
+    gap: 8px;
+    align-items: start;
+    font-size: 12px;
+    color: var(--text-dim);
+  }
+  .check-dot {
+    width: 8px; height: 8px;
+    border-radius: 50%;
+    margin-top: 5px;
+    background: #555;
+  }
+  .check-dot.ok { background: var(--ok); box-shadow: 0 0 8px rgba(46,204,113,0.6); }
+  .check-dot.warn { background: var(--warn); box-shadow: 0 0 8px rgba(243,156,18,0.5); }
+  .check-main { color: var(--text); }
+  .check-sub {
+    margin-top: 2px;
+    line-height: 1.35;
+    word-break: break-all;
+  }
+  .modal {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    padding: 18px;
+  }
+  .modal-box {
+    width: 100%;
+    border: 1px solid rgba(108,92,231,0.28);
+    border-radius: 12px;
+    background: rgba(20,20,32,0.94);
+    padding: 16px;
+  }
 </style>
 </head>
 <body>
 
 <div class="widget">
   <div class="header">
-    <span class="dot" id="statusDot"></span>
-    <span>语音助手</span>
+    <div class="brand">
+      <span class="dot" id="statusDot"></span>
+      <span>语音助手</span>
+    </div>
+    <button class="icon-btn" id="settingsBtn" title="设置">
+      <svg viewBox="0 0 24 24">
+        <circle cx="12" cy="12" r="3"></circle>
+        <path d="M19.4 15a1.7 1.7 0 0 0 .3 1.9l.1.1a2 2 0 1 1-2.8 2.8l-.1-.1a1.7 1.7 0 0 0-1.9-.3 1.7 1.7 0 0 0-1 1.5V21a2 2 0 1 1-4 0v-.1a1.7 1.7 0 0 0-1-1.5 1.7 1.7 0 0 0-1.9.3l-.1.1a2 2 0 1 1-2.8-2.8l.1-.1a1.7 1.7 0 0 0 .3-1.9 1.7 1.7 0 0 0-1.5-1H3a2 2 0 1 1 0-4h.1a1.7 1.7 0 0 0 1.5-1 1.7 1.7 0 0 0-.3-1.9l-.1-.1a2 2 0 1 1 2.8-2.8l.1.1a1.7 1.7 0 0 0 1.9.3h.1a1.7 1.7 0 0 0 .9-1.5V3a2 2 0 1 1 4 0v.1a1.7 1.7 0 0 0 1 1.5 1.7 1.7 0 0 0 1.9-.3l.1-.1a2 2 0 1 1 2.8 2.8l-.1.1a1.7 1.7 0 0 0-.3 1.9v.1a1.7 1.7 0 0 0 1.5.9h.1a2 2 0 1 1 0 4h-.1a1.7 1.7 0 0 0-1.5 1z"></path>
+      </svg>
+    </button>
   </div>
 
   <div class="viz-container">
@@ -174,14 +326,86 @@
 
   <div class="transcript" id="transcript"></div>
   <div class="status" id="status">按住说话，松开发送</div>
+
+  <div class="panel hidden" id="settingsPanel">
+    <div class="panel-head">
+      <div class="panel-title">设置</div>
+      <button class="icon-btn" id="closeSettingsBtn" title="关闭">
+        <svg viewBox="0 0 24 24"><path d="M18 6 6 18"></path><path d="m6 6 12 12"></path></svg>
+      </button>
+    </div>
+
+    <div class="settings-group">
+      <h2>诊断</h2>
+      <div class="check-list" id="diagList"></div>
+    </div>
+
+    <div class="settings-group">
+      <h2>音频</h2>
+      <label class="field">输入设备<select id="inputDevice"></select></label>
+      <label class="field">输出设备<select id="outputDevice"></select></label>
+      <label class="field">输入增益<input id="inputGain" type="range" min="0.5" max="3" step="0.1"></label>
+      <label class="field">输出音量<input id="outputVolume" type="range" min="0.2" max="2" step="0.1"></label>
+      <label class="field">VAD 阈值<input id="vadThreshold" type="range" min="0.002" max="0.04" step="0.001"></label>
+    </div>
+
+    <div class="settings-group">
+      <h2>模型</h2>
+      <label class="field">STT 模型
+        <select id="sttModel">
+          <option value="tiny">tiny</option>
+          <option value="base">base</option>
+          <option value="small">small</option>
+          <option value="medium">medium</option>
+        </select>
+      </label>
+      <label class="field">TTS 音色<input id="ttsVoice" type="text"></label>
+      <label class="field">Hermes 地址<input id="hermesBaseUrl" type="text"></label>
+    </div>
+
+    <div class="settings-group">
+      <h2>窗口</h2>
+      <label class="field row">窗口置顶<input id="alwaysOnTop" type="checkbox"></label>
+      <label class="field row">启动后隐藏<input id="startMinimized" type="checkbox"></label>
+    </div>
+
+    <div class="actions">
+      <button class="text-btn" id="refreshStatusBtn">重新检测</button>
+      <button class="text-btn primary" id="saveSettingsBtn">保存</button>
+    </div>
+  </div>
+
+  <div class="modal hidden" id="setupModal">
+    <div class="modal-box">
+      <div class="modal-head">
+        <div class="modal-title">首次启动诊断</div>
+        <button class="icon-btn" id="skipSetupBtn" title="完成">
+          <svg viewBox="0 0 24 24"><path d="m5 12 5 5L20 7"></path></svg>
+        </button>
+      </div>
+      <div class="check-list" id="setupChecks"></div>
+      <div class="actions">
+        <button class="text-btn" id="setupRefreshBtn">重新检测</button>
+        <button class="text-btn primary" id="completeSetupBtn">完成</button>
+      </div>
+    </div>
+  </div>
 </div>
 
+<script src="/api/config.js"></script>
 <script>
-var ws = new WebSocket("ws://127.0.0.1:8765/ws");
+var appConfig = window.VOICE_WIDGET_CONFIG || { host: location.hostname || "127.0.0.1", port: location.port || 8765 };
+var ws = new WebSocket("ws://" + appConfig.host + ":" + appConfig.port + "/ws");
 var state = "idle";
+var settingsData = null;
+var devicesData = { inputs: [], outputs: [] };
+var statusData = null;
 
 ws.onopen = function() { console.log("WS connected"); };
-ws.onclose = function() { console.log("WS closed"); };
+ws.onclose = function() {
+  console.log("WS closed");
+  setStatus("连接已断开");
+};
 
 ws.onmessage = function(e) {
   var msg = JSON.parse(e.data);
@@ -203,11 +427,196 @@ ws.onmessage = function(e) {
   }
 };
 
+function $(id) {
+  return document.getElementById(id);
+}
+
+function apiGet(path) {
+  return fetch(path, { cache: "no-store" }).then(function(response) {
+    if (!response.ok) throw new Error(response.statusText);
+    return response.json();
+  });
+}
+
+function apiPost(path, payload) {
+  return fetch(path, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(payload || {})
+  }).then(function(response) {
+    if (!response.ok) throw new Error(response.statusText);
+    return response.json();
+  });
+}
+
+function boolText(value) {
+  return value ? "正常" : "待处理";
+}
+
+function checkItem(label, ok, detail) {
+  return {
+    label: label,
+    ok: !!ok,
+    detail: detail || boolText(ok)
+  };
+}
+
+function collectChecks() {
+  var deps = (statusData && statusData.dependencies) || {};
+  var hermes = (statusData && statusData.hermes) || {};
+  return [
+    checkItem("ffmpeg", deps.ffmpeg, deps.ffmpeg_path || "未检测到"),
+    checkItem("麦克风", devicesData.inputs.length > 0, devicesData.inputs.length + " 个输入设备"),
+    checkItem("扬声器", devicesData.outputs.length > 0, devicesData.outputs.length + " 个输出设备"),
+    checkItem("Hermes Gateway", hermes.reachable, hermes.base_url || "未配置"),
+    checkItem("STT", statusData && statusData.stt_ready, statusData && statusData.stt_ready ? "模型已就绪" : "模型预热中或失败"),
+    checkItem("TTS", statusData && statusData.tts_ready, statusData && statusData.tts_ready ? "语音已就绪" : "语音预热中或失败")
+  ];
+}
+
+function renderChecks(containerId) {
+  var container = $(containerId);
+  if (!container) return;
+  var checks = collectChecks();
+  container.innerHTML = "";
+  checks.forEach(function(item) {
+    var row = document.createElement("div");
+    row.className = "check-item";
+    var dot = document.createElement("span");
+    dot.className = "check-dot " + (item.ok ? "ok" : "warn");
+    var text = document.createElement("div");
+    var main = document.createElement("div");
+    main.className = "check-main";
+    main.textContent = item.label;
+    var sub = document.createElement("div");
+    sub.className = "check-sub";
+    sub.textContent = item.detail;
+    text.appendChild(main);
+    text.appendChild(sub);
+    row.appendChild(dot);
+    row.appendChild(text);
+    container.appendChild(row);
+  });
+}
+
+function fillDeviceSelect(select, devices, currentValue) {
+  select.innerHTML = "";
+  var defaultOption = document.createElement("option");
+  defaultOption.value = "";
+  defaultOption.textContent = "系统默认";
+  select.appendChild(defaultOption);
+  devices.forEach(function(device) {
+    var option = document.createElement("option");
+    option.value = String(device.index);
+    option.textContent = device.name;
+    select.appendChild(option);
+  });
+  select.value = currentValue === null || currentValue === undefined ? "" : String(currentValue);
+}
+
+function renderSettings() {
+  if (!settingsData) return;
+  var audio = settingsData.audio || {};
+  var stt = settingsData.stt || {};
+  var tts = settingsData.tts || {};
+  var hermes = settingsData.hermes || {};
+  var ui = settingsData.ui || {};
+
+  fillDeviceSelect($("inputDevice"), devicesData.inputs, audio.input_device);
+  fillDeviceSelect($("outputDevice"), devicesData.outputs, audio.output_device);
+  $("inputGain").value = audio.input_gain || 1;
+  $("outputVolume").value = audio.output_volume || 1;
+  $("vadThreshold").value = audio.vad_threshold || 0.012;
+  $("sttModel").value = stt.model || "base";
+  $("ttsVoice").value = tts.voice || "zh-CN-XiaoxiaoNeural";
+  $("hermesBaseUrl").value = hermes.base_url || "http://127.0.0.1:8642";
+  $("alwaysOnTop").checked = !!ui.always_on_top;
+  $("startMinimized").checked = !!ui.start_minimized;
+}
+
+function deviceValue(id) {
+  var value = $(id).value;
+  return value === "" ? null : Number(value);
+}
+
+function readSettingsForm() {
+  return {
+    audio: {
+      input_device: deviceValue("inputDevice"),
+      output_device: deviceValue("outputDevice"),
+      input_gain: Number($("inputGain").value),
+      output_volume: Number($("outputVolume").value),
+      vad_threshold: Number($("vadThreshold").value)
+    },
+    stt: {
+      model: $("sttModel").value
+    },
+    tts: {
+      voice: $("ttsVoice").value.trim() || "zh-CN-XiaoxiaoNeural"
+    },
+    hermes: {
+      base_url: $("hermesBaseUrl").value.trim() || "http://127.0.0.1:8642"
+    },
+    ui: {
+      always_on_top: $("alwaysOnTop").checked,
+      start_minimized: $("startMinimized").checked
+    }
+  };
+}
+
+function refreshStatus() {
+  return Promise.all([
+    apiGet("/api/status"),
+    apiGet("/api/devices").catch(function() { return { inputs: [], outputs: [] }; })
+  ]).then(function(results) {
+    statusData = results[0];
+    devicesData = results[1];
+    settingsData = statusData.settings;
+    renderChecks("diagList");
+    renderChecks("setupChecks");
+    renderSettings();
+    if (settingsData && settingsData.setup && !settingsData.setup.first_run_complete) {
+      $("setupModal").classList.remove("hidden");
+    }
+  }).catch(function(error) {
+    setStatus("诊断失败: " + error.message);
+  });
+}
+
+function openSettings() {
+  $("settingsPanel").classList.remove("hidden");
+  refreshStatus();
+}
+
+function closeSettings() {
+  $("settingsPanel").classList.add("hidden");
+}
+
+function saveSettings() {
+  apiPost("/api/settings", readSettingsForm()).then(function(saved) {
+    settingsData = saved;
+    setStatus("设置已保存");
+    closeSettings();
+    refreshStatus();
+  }).catch(function(error) {
+    setStatus("保存失败: " + error.message);
+  });
+}
+
+function completeSetup() {
+  apiPost("/api/setup/complete", {}).then(function(saved) {
+    settingsData = saved;
+    $("setupModal").classList.add("hidden");
+  }).catch(function(error) {
+    setStatus("诊断向导失败: " + error.message);
+  });
+}
+
 function setState(s) {
   state = s;
-  var btn = document.getElementById("micBtn");
-  var dot = document.getElementById("statusDot");
-  var status = document.getElementById("status");
+  var btn = $("micBtn");
+  var dot = $("statusDot");
+  var status = $("status");
   btn.classList.remove("recording", "processing");
   dot.classList.remove("off");
   status.classList.remove("recording", "processing");
@@ -227,14 +636,14 @@ function setState(s) {
 }
 
 function setStatus(text) {
-  document.getElementById("status").textContent = text;
+  $("status").textContent = text;
 }
 
 function addMessage(role, text) {
   var div = document.createElement("div");
   div.className = "msg " + role;
   div.textContent = text;
-  var container = document.getElementById("transcript");
+  var container = $("transcript");
   container.appendChild(div);
   container.scrollTop = container.scrollHeight;
 }
@@ -251,7 +660,7 @@ function stopTalk() {
   }
 }
 
-var micBtn = document.getElementById("micBtn");
+var micBtn = $("micBtn");
 micBtn.addEventListener("pointerdown", function(event) {
   event.preventDefault();
   micBtn.setPointerCapture(event.pointerId);
@@ -276,6 +685,15 @@ document.addEventListener("keyup", function(event) {
     stopTalk();
   }
 });
+
+$("settingsBtn").addEventListener("click", openSettings);
+$("closeSettingsBtn").addEventListener("click", closeSettings);
+$("refreshStatusBtn").addEventListener("click", refreshStatus);
+$("saveSettingsBtn").addEventListener("click", saveSettings);
+$("setupRefreshBtn").addEventListener("click", refreshStatus);
+$("completeSetupBtn").addEventListener("click", completeSetup);
+$("skipSetupBtn").addEventListener("click", completeSetup);
+refreshStatus();
 
 // ── Voice Visualization ────────────────────────────────────────────
 var canvas = document.getElementById("viz");

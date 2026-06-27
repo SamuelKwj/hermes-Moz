@@ -7,23 +7,23 @@ import httpx
 
 logger = logging.getLogger(__name__)
 
-HERMES_BASE = os.getenv("HERMES_GATEWAY_URL", "http://127.0.0.1:8642")
-API_KEY = os.getenv("API_SERVER_KEY", "bridge-secret-key")
-
-
 class HermesClient:
     def __init__(self):
-        self.base_url = HERMES_BASE
-        self._client = httpx.AsyncClient(
-            timeout=120.0,
-            headers={"Authorization": f"Bearer {API_KEY}"},
-        )
+        self._client = httpx.AsyncClient(timeout=120.0)
 
     async def chat(self, message: str) -> str:
         """Send a single-turn message to Hermes gateway."""
+        from settings import load_settings
+
+        hermes_settings = load_settings()["hermes"]
+        base_url = os.getenv("HERMES_GATEWAY_URL", hermes_settings.get("base_url", "http://127.0.0.1:8642"))
+        api_key = os.getenv("API_SERVER_KEY", hermes_settings.get("api_key", "bridge-secret-key"))
+        timeout = float(hermes_settings.get("request_timeout_seconds", 90))
         try:
             resp = await self._client.post(
-                f"{self.base_url}/v1/chat/completions",
+                f"{base_url}/v1/chat/completions",
+                headers={"Authorization": f"Bearer {api_key}"},
+                timeout=timeout,
                 json={
                     "model": "hermes",
                     "messages": [
@@ -46,7 +46,7 @@ class HermesClient:
             data = resp.json()
             return data["choices"][0]["message"]["content"]
         except httpx.ConnectError:
-            logger.warning("Hermes gateway not reachable at %s", self.base_url)
+            logger.warning("Hermes gateway not reachable at %s", base_url)
             return "Hermes 网关没启动，请先启动它。"
         except Exception:
             logger.exception("Hermes gateway call failed")

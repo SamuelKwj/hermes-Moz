@@ -3,3 +3,8 @@ __pycache__/
 *.pyo
 __pycache__
 work/
+.venv/
+dist/
+build/
+*.spec
+!packaging/*.spec
