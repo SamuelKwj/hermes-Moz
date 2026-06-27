@@ -264,28 +264,38 @@ function updateViz(rms) {
 
 function draw() {
   requestAnimationFrame(draw);
+
+  // Idle breathing when no mic input
+  var idleWave = 0.08 + 0.04 * Math.sin(performance.now() * 0.002);
+  var effectiveLevel = targetLevel > 0.02 ? currentLevel : idleWave;
+
   currentLevel += (targetLevel - currentLevel) * 0.3;
-  history.push(currentLevel);
+  history.push(effectiveLevel);
   if (history.length > 120) history.shift();
+
   ctx.clearRect(0, 0, W, H);
 
-  var glowRadius = 160 + currentLevel * 20;
+  // ── outer glow ──
+  var glowRadius = 160 + effectiveLevel * 20;
   var glow = ctx.createRadialGradient(CX, CY, 100, CX, CY, glowRadius);
   glow.addColorStop(0, "rgba(108,92,231,0)");
-  glow.addColorStop(0.6, "rgba(108,92,231," + (0.05 + currentLevel * 0.15) + ")");
+  glow.addColorStop(0.6, "rgba(108,92,231," + (0.08 + effectiveLevel * 0.15) + ")");
   glow.addColorStop(1, "rgba(108,92,231,0)");
   ctx.fillStyle = glow;
   ctx.fillRect(0, 0, W, H);
 
+  // ── base ring ──
   ctx.beginPath();
   ctx.arc(CX, CY, 80, 0, Math.PI * 2);
-  ctx.strokeStyle = "rgba(108,92,231,0.15)";
-  ctx.lineWidth = 1;
+  ctx.strokeStyle = "rgba(108,92,231,0.25)";
+  ctx.lineWidth = 1.5;
   ctx.stroke();
 
+  // ── waveform bars ──
   var bars = 64;
   var baseRadius = 85;
   var maxHeight = 50;
+
   for (var i = 0; i < bars; i++) {
     var angle = (i / bars) * Math.PI * 2 - Math.PI / 2;
     var histIdx = Math.floor((i / bars) * history.length);
@@ -301,7 +311,7 @@ function draw() {
     var r = Math.floor(108 + intensity * 80);
     var g = Math.floor(92 + intensity * 40);
     var b = Math.floor(231 - intensity * 40);
-    var alpha = 0.4 + intensity * 0.6;
+    var alpha = 0.5 + intensity * 0.5;
     ctx.beginPath();
     ctx.moveTo(x1, y1);
     ctx.lineTo(x2, y2);
@@ -311,9 +321,10 @@ function draw() {
     ctx.stroke();
   }
 
-  var dotSize = 6 + currentLevel * 8;
+  // ── center dot ──
+  var dotSize = 6 + effectiveLevel * 8;
   var dotGrad = ctx.createRadialGradient(CX, CY, 0, CX, CY, dotSize * 2);
-  dotGrad.addColorStop(0, "rgba(162,155,254," + (0.6 + currentLevel * 0.4) + ")");
+  dotGrad.addColorStop(0, "rgba(162,155,254," + (0.7 + effectiveLevel * 0.3) + ")");
   dotGrad.addColorStop(1, "rgba(108,92,231,0)");
   ctx.beginPath();
   ctx.arc(CX, CY, dotSize * 2, 0, Math.PI * 2);
@@ -321,11 +332,12 @@ function draw() {
   ctx.fill();
   ctx.beginPath();
   ctx.arc(CX, CY, dotSize, 0, Math.PI * 2);
-  ctx.fillStyle = "rgba(162,155,254," + (0.8 + currentLevel * 0.2) + ")";
+  ctx.fillStyle = "rgba(162,155,254," + (0.85 + effectiveLevel * 0.15) + ")";
   ctx.fill();
 }
 draw();
 </script>
 </body>
 </html>
+
 

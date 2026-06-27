@@ -23,6 +23,15 @@ active_ws: WebSocket | None = None
 _event_loop: asyncio.AbstractEventLoop | None = None
 
 
+@app.on_event("startup")
+async def startup():
+    """Pre-load STT model so first turn is fast."""
+    logger.info("Pre-loading STT model...")
+    from stt_engine import _get_model
+    await asyncio.to_thread(_get_model)
+    logger.info("STT model ready.")
+
+
 @app.get("/")
 async def root():
     return FileResponse(Path(__file__).resolve().parent.parent / "frontend" / "index.html")
@@ -37,7 +46,6 @@ async def websocket_endpoint(ws: WebSocket):
     logger.info("WebSocket connected")
 
     def level_cb(rms: float):
-        """Send audio level to frontend for visualization (thread-safe)."""
         if active_ws and _event_loop and _event_loop.is_running():
             asyncio.run_coroutine_threadsafe(
                 active_ws.send_json({"type": "level", "rms": rms}),
