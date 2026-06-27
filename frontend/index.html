@@ -68,6 +68,8 @@
     width: 200px; height: 200px;
     z-index: 1;
     -webkit-app-region: no-drag;
+    border-radius: 50%;
+    background: rgba(8, 8, 18, 0.28);
   }
   canvas#viz {
     width: 200px; height: 200px;
@@ -160,7 +162,7 @@
   </div>
 
   <div class="viz-container">
-    <canvas id="viz" width="400" height="400"></canvas>
+    <canvas id="viz" width="200" height="200"></canvas>
   </div>
 
   <button class="mic-btn" id="micBtn" title="点击说话">
@@ -171,7 +173,7 @@
   </button>
 
   <div class="transcript" id="transcript"></div>
-  <div class="status" id="status">点击麦克风说话</div>
+  <div class="status" id="status">按住说话，松开发送</div>
 </div>
 
 <script>
@@ -220,7 +222,7 @@ function setState(s) {
     status.classList.add("processing");
   } else {
     dot.classList.add("off");
-    status.textContent = "点击麦克风说话";
+    status.textContent = "按住说话，松开发送";
   }
 }
 
@@ -237,12 +239,41 @@ function addMessage(role, text) {
   container.scrollTop = container.scrollHeight;
 }
 
-var micBtn = document.getElementById("micBtn");
-micBtn.addEventListener("click", function() {
+function startTalk() {
   if (state === "idle") {
     ws.send(JSON.stringify({ cmd: "start_record" }));
-  } else if (state === "recording") {
+  }
+}
+
+function stopTalk() {
+  if (state === "recording") {
     ws.send(JSON.stringify({ cmd: "stop_record" }));
+  }
+}
+
+var micBtn = document.getElementById("micBtn");
+micBtn.addEventListener("pointerdown", function(event) {
+  event.preventDefault();
+  micBtn.setPointerCapture(event.pointerId);
+  startTalk();
+});
+micBtn.addEventListener("pointerup", function(event) {
+  event.preventDefault();
+  stopTalk();
+});
+micBtn.addEventListener("pointercancel", stopTalk);
+micBtn.addEventListener("lostpointercapture", stopTalk);
+
+document.addEventListener("keydown", function(event) {
+  if (event.code === "Space" && !event.repeat) {
+    event.preventDefault();
+    startTalk();
+  }
+});
+document.addEventListener("keyup", function(event) {
+  if (event.code === "Space") {
+    event.preventDefault();
+    stopTalk();
   }
 });
 
@@ -255,68 +286,72 @@ var CX = W / 2;
 var CY = H / 2;
 var currentLevel = 0;
 var targetLevel = 0;
-var history = [];
-for (var i = 0; i < 120; i++) history.push(0.01);
+var levelHistory = [];
+for (var i = 0; i < 120; i++) levelHistory.push(0.18);
 
 function updateViz(rms) {
-  targetLevel = Math.min(1, rms * 8);
+  targetLevel = Math.min(1, rms * 14);
 }
 
 function draw() {
   requestAnimationFrame(draw);
 
   // Idle breathing when no mic input
-  var idleWave = 0.08 + 0.04 * Math.sin(performance.now() * 0.002);
-  var effectiveLevel = targetLevel > 0.02 ? currentLevel : idleWave;
+  var t = performance.now();
+  var idleWave = 0.30 + 0.10 * Math.sin(t * 0.002);
+  var effectiveLevel = targetLevel > 0.025 ? Math.max(currentLevel, 0.18) : idleWave;
 
   currentLevel += (targetLevel - currentLevel) * 0.3;
-  history.push(effectiveLevel);
-  if (history.length > 120) history.shift();
+  levelHistory.push(effectiveLevel);
+  if (levelHistory.length > 120) levelHistory.shift();
 
   ctx.clearRect(0, 0, W, H);
 
   // ── outer glow ──
-  var glowRadius = 160 + effectiveLevel * 20;
-  var glow = ctx.createRadialGradient(CX, CY, 100, CX, CY, glowRadius);
+  var glowRadius = 92 + effectiveLevel * 18;
+  var glow = ctx.createRadialGradient(CX, CY, 18, CX, CY, glowRadius);
   glow.addColorStop(0, "rgba(108,92,231,0)");
-  glow.addColorStop(0.6, "rgba(108,92,231," + (0.08 + effectiveLevel * 0.15) + ")");
+  glow.addColorStop(0.6, "rgba(108,92,231," + (0.16 + effectiveLevel * 0.22) + ")");
   glow.addColorStop(1, "rgba(108,92,231,0)");
   ctx.fillStyle = glow;
   ctx.fillRect(0, 0, W, H);
 
   // ── base ring ──
   ctx.beginPath();
-  ctx.arc(CX, CY, 80, 0, Math.PI * 2);
-  ctx.strokeStyle = "rgba(108,92,231,0.25)";
-  ctx.lineWidth = 1.5;
+  ctx.arc(CX, CY, 54, 0, Math.PI * 2);
+  ctx.strokeStyle = "rgba(120,230,255,0.24)";
+  ctx.lineWidth = 2.5;
   ctx.stroke();
 
   // ── waveform bars ──
-  var bars = 64;
-  var baseRadius = 85;
-  var maxHeight = 50;
+  var bars = 96;
+  var baseRadius = 52;
+  var maxHeight = 42;
 
   for (var i = 0; i < bars; i++) {
     var angle = (i / bars) * Math.PI * 2 - Math.PI / 2;
-    var histIdx = Math.floor((i / bars) * history.length);
-    var h = history[Math.min(histIdx, history.length - 1)];
-    var barHeight = h * maxHeight * (0.5 + 0.5 * Math.abs(Math.sin(angle * 3 + performance.now() * 0.001)));
-    var innerR = baseRadius;
+    var histIdx = Math.floor((i / bars) * levelHistory.length);
+    var h = levelHistory[Math.min(histIdx, levelHistory.length - 1)];
+    var idlePattern = 0.35 + 0.65 * Math.abs(Math.sin(angle * 6 + t * 0.0018));
+    var audioPattern = 0.68 + 0.32 * Math.abs(Math.sin(angle * 3 + t * 0.004));
+    var barHeight = (18 + h * maxHeight) * idlePattern * audioPattern;
+    var innerR = baseRadius - barHeight * 0.36;
     var outerR = baseRadius + barHeight;
     var x1 = CX + Math.cos(angle) * innerR;
     var y1 = CY + Math.sin(angle) * innerR;
     var x2 = CX + Math.cos(angle) * outerR;
     var y2 = CY + Math.sin(angle) * outerR;
     var intensity = h;
-    var r = Math.floor(108 + intensity * 80);
-    var g = Math.floor(92 + intensity * 40);
-    var b = Math.floor(231 - intensity * 40);
-    var alpha = 0.5 + intensity * 0.5;
+    var colorPulse = 0.5 + 0.5 * Math.sin(angle * 2 + t * 0.001);
+    var r = Math.floor(80 + colorPulse * 80);
+    var g = Math.floor(180 + intensity * 60);
+    var b = 255;
+    var alpha = 0.82 + intensity * 0.18;
     ctx.beginPath();
     ctx.moveTo(x1, y1);
     ctx.lineTo(x2, y2);
     ctx.strokeStyle = "rgba(" + r + "," + g + "," + b + "," + alpha + ")";
-    ctx.lineWidth = 2.5;
+    ctx.lineWidth = 2.2;
     ctx.lineCap = "round";
     ctx.stroke();
   }

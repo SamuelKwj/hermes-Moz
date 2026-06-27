@@ -5,6 +5,7 @@ import os
 import sys
 import threading
 import time
+import urllib.request
 from pathlib import Path
 
 import uvicorn
@@ -39,11 +40,27 @@ class UvicornThread(threading.Thread):
         self._server.should_exit = True
 
 
+def wait_for_backend(timeout_seconds=30):
+    deadline = time.time() + timeout_seconds
+    last_error = None
+
+    while time.time() < deadline:
+        try:
+            with urllib.request.urlopen("http://127.0.0.1:8765/health", timeout=1) as response:
+                if response.status == 200:
+                    return
+        except Exception as exc:
+            last_error = exc
+            time.sleep(0.25)
+
+    raise RuntimeError(f"Backend did not become ready: {last_error}")
+
+
 def main():
     logger.info("Starting backend server...")
     server_thread = UvicornThread()
     server_thread.start()
-    time.sleep(2)
+    wait_for_backend()
 
     logger.info("Launching desktop widget...")
     window = webview.create_window(

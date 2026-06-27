@@ -21,20 +21,55 @@ app = FastAPI(title="Voice Desktop Widget")
 pipeline = VoicePipeline()
 active_ws: WebSocket | None = None
 _event_loop: asyncio.AbstractEventLoop | None = None
+_stt_ready = False
+_tts_ready = False
 
 
 @app.on_event("startup")
 async def startup():
-    """Pre-load STT model so first turn is fast."""
-    logger.info("Pre-loading STT model...")
-    from stt_engine import _get_model
-    await asyncio.to_thread(_get_model)
-    logger.info("STT model ready.")
+    """Warm STT in the background so the HTTP server can listen immediately."""
+    asyncio.create_task(_warm_stt_model())
+    asyncio.create_task(_warm_tts_engine())
+
+
+async def _warm_stt_model():
+    global _stt_ready
+    try:
+        logger.info("Pre-loading STT model...")
+        from stt_engine import _get_model
+
+        await asyncio.to_thread(_get_model)
+        _stt_ready = True
+        logger.info("STT model ready.")
+    except Exception:
+        logger.exception("STT model warmup failed.")
+
+
+async def _warm_tts_engine():
+    global _tts_ready
+    try:
+        logger.info("Pre-warming TTS engine...")
+        from tts_engine import synthesize
+
+        path = await synthesize("语音助手已启动。")
+        try:
+            os.unlink(path)
+        except OSError:
+            pass
+        _tts_ready = True
+        logger.info("TTS engine ready.")
+    except Exception:
+        logger.exception("TTS engine warmup failed.")
 
 
 @app.get("/")
 async def root():
     return FileResponse(Path(__file__).resolve().parent.parent / "frontend" / "index.html")
+
+
+@app.get("/health")
+async def health():
+    return {"ok": True, "stt_ready": _stt_ready, "tts_ready": _tts_ready}
 
 
 @app.websocket("/ws")
