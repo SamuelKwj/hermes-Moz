@@ -1,0 +1,331 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Voice Widget</title>
+<style>
+  :root {
+    --bg: #0a0a0f;
+    --surface: #141420;
+    --accent: #6c5ce7;
+    --accent-glow: #a29bfe;
+    --text: #e0e0f0;
+    --text-dim: #8888a0;
+    --danger: #e74c3c;
+    --radius: 20px;
+  }
+  * { margin: 0; padding: 0; box-sizing: border-box; }
+  body {
+    background: #0a0a0f;
+    font-family: "Microsoft YaHei", "Segoe UI", system-ui, sans-serif;
+    color: var(--text);
+    overflow: hidden;
+    user-select: none;
+  }
+  .widget {
+    width: 320px;
+    min-height: 480px;
+    background: var(--bg);
+    border-radius: var(--radius);
+    border: 1px solid rgba(108, 92, 231, 0.25);
+    box-shadow: 0 0 60px rgba(108, 92, 231, 0.15), 0 8px 32px rgba(0,0,0,0.5);
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    padding: 24px 20px;
+    gap: 20px;
+    position: relative;
+    overflow: hidden;
+  }
+  .widget::before {
+    content: "";
+    position: absolute;
+    inset: -40px;
+    background: radial-gradient(circle at 50% 30%, rgba(108,92,231,0.12), transparent 70%);
+    pointer-events: none;
+  }
+  .header {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    font-size: 13px;
+    color: var(--text-dim);
+    letter-spacing: 0.04em;
+    z-index: 1;
+    -webkit-app-region: drag;
+  }
+  .header .dot {
+    width: 8px; height: 8px;
+    border-radius: 50%;
+    background: #2ecc71;
+    box-shadow: 0 0 8px #2ecc71;
+    transition: all 0.3s;
+  }
+  .header .dot.off { background: #555; box-shadow: none; }
+  .viz-container {
+    position: relative;
+    width: 200px; height: 200px;
+    z-index: 1;
+    -webkit-app-region: no-drag;
+  }
+  canvas#viz {
+    width: 200px; height: 200px;
+    display: block;
+  }
+  .mic-btn {
+    width: 72px; height: 72px;
+    border-radius: 50%;
+    border: 2px solid rgba(108,92,231,0.4);
+    background: var(--surface);
+    cursor: pointer;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    transition: all 0.25s ease;
+    z-index: 1;
+    -webkit-app-region: no-drag;
+    position: relative;
+  }
+  .mic-btn:hover {
+    border-color: var(--accent);
+    box-shadow: 0 0 24px rgba(108,92,231,0.3);
+  }
+  .mic-btn.recording {
+    border-color: var(--danger);
+    box-shadow: 0 0 32px rgba(231,76,60,0.4);
+    animation: pulse-btn 1.5s ease-in-out infinite;
+  }
+  .mic-btn.processing {
+    border-color: #f39c12;
+    box-shadow: 0 0 24px rgba(243,156,18,0.3);
+  }
+  @keyframes pulse-btn {
+    0%, 100% { box-shadow: 0 0 16px rgba(231,76,60,0.3); }
+    50% { box-shadow: 0 0 40px rgba(231,76,60,0.6); }
+  }
+  .mic-btn svg {
+    width: 28px; height: 28px;
+    fill: none; stroke: var(--text); stroke-width: 2;
+    transition: all 0.25s;
+  }
+  .mic-btn.recording svg { stroke: var(--danger); }
+  .transcript {
+    width: 100%;
+    max-height: 120px;
+    overflow-y: auto;
+    font-size: 13px;
+    line-height: 1.5;
+    z-index: 1;
+    -webkit-app-region: no-drag;
+    display: flex;
+    flex-direction: column;
+    gap: 8px;
+  }
+  .transcript .msg {
+    padding: 8px 12px;
+    border-radius: 12px;
+    max-width: 90%;
+    word-break: break-word;
+  }
+  .transcript .msg.user {
+    align-self: flex-end;
+    background: rgba(108,92,231,0.2);
+    border: 1px solid rgba(108,92,231,0.3);
+  }
+  .transcript .msg.assistant {
+    align-self: flex-start;
+    background: rgba(255,255,255,0.06);
+    border: 1px solid rgba(255,255,255,0.08);
+  }
+  .status {
+    font-size: 11px;
+    color: var(--text-dim);
+    letter-spacing: 0.03em;
+    z-index: 1;
+    text-align: center;
+    min-height: 16px;
+    transition: color 0.3s;
+  }
+  .status.recording { color: var(--danger); }
+  .status.processing { color: #f39c12; }
+</style>
+</head>
+<body>
+
+<div class="widget">
+  <div class="header">
+    <span class="dot" id="statusDot"></span>
+    <span>语音助手</span>
+  </div>
+
+  <div class="viz-container">
+    <canvas id="viz" width="400" height="400"></canvas>
+  </div>
+
+  <button class="mic-btn" id="micBtn" title="点击说话">
+    <svg viewBox="0 0 24 24">
+      <path d="M12 1a3 3 0 0 0-3 3v8a3 3 0 0 0 6 0V4a3 3 0 0 0-3-3z"/>
+      <path d="M19 10v2a7 7 0 0 1-6 6.92V22h-2v-3.08A7 7 0 0 1 5 12v-2"/>
+    </svg>
+  </button>
+
+  <div class="transcript" id="transcript"></div>
+  <div class="status" id="status">点击麦克风说话</div>
+</div>
+
+<script>
+var ws = new WebSocket("ws://127.0.0.1:8765/ws");
+var state = "idle";
+
+ws.onopen = function() { console.log("WS connected"); };
+ws.onclose = function() { console.log("WS closed"); };
+
+ws.onmessage = function(e) {
+  var msg = JSON.parse(e.data);
+  switch (msg.type) {
+    case "level":
+      updateViz(msg.rms);
+      break;
+    case "status":
+      setState(msg.state);
+      break;
+    case "result":
+      addMessage("user", msg.user);
+      addMessage("assistant", msg.assistant);
+      break;
+    case "error":
+      setStatus("错误: " + msg.message);
+      setState("idle");
+      break;
+  }
+};
+
+function setState(s) {
+  state = s;
+  var btn = document.getElementById("micBtn");
+  var dot = document.getElementById("statusDot");
+  var status = document.getElementById("status");
+  btn.classList.remove("recording", "processing");
+  dot.classList.remove("off");
+  status.classList.remove("recording", "processing");
+
+  if (s === "recording") {
+    btn.classList.add("recording");
+    status.textContent = "正在聆听...";
+    status.classList.add("recording");
+  } else if (s === "processing") {
+    btn.classList.add("processing");
+    status.textContent = "处理中...";
+    status.classList.add("processing");
+  } else {
+    dot.classList.add("off");
+    status.textContent = "点击麦克风说话";
+  }
+}
+
+function setStatus(text) {
+  document.getElementById("status").textContent = text;
+}
+
+function addMessage(role, text) {
+  var div = document.createElement("div");
+  div.className = "msg " + role;
+  div.textContent = text;
+  var container = document.getElementById("transcript");
+  container.appendChild(div);
+  container.scrollTop = container.scrollHeight;
+}
+
+var micBtn = document.getElementById("micBtn");
+micBtn.addEventListener("click", function() {
+  if (state === "idle") {
+    ws.send(JSON.stringify({ cmd: "start_record" }));
+  } else if (state === "recording") {
+    ws.send(JSON.stringify({ cmd: "stop_record" }));
+  }
+});
+
+// ── Voice Visualization ────────────────────────────────────────────
+var canvas = document.getElementById("viz");
+var ctx = canvas.getContext("2d");
+var W = canvas.width;
+var H = canvas.height;
+var CX = W / 2;
+var CY = H / 2;
+var currentLevel = 0;
+var targetLevel = 0;
+var history = [];
+for (var i = 0; i < 120; i++) history.push(0.01);
+
+function updateViz(rms) {
+  targetLevel = Math.min(1, rms * 8);
+}
+
+function draw() {
+  requestAnimationFrame(draw);
+  currentLevel += (targetLevel - currentLevel) * 0.3;
+  history.push(currentLevel);
+  if (history.length > 120) history.shift();
+  ctx.clearRect(0, 0, W, H);
+
+  var glowRadius = 160 + currentLevel * 20;
+  var glow = ctx.createRadialGradient(CX, CY, 100, CX, CY, glowRadius);
+  glow.addColorStop(0, "rgba(108,92,231,0)");
+  glow.addColorStop(0.6, "rgba(108,92,231," + (0.05 + currentLevel * 0.15) + ")");
+  glow.addColorStop(1, "rgba(108,92,231,0)");
+  ctx.fillStyle = glow;
+  ctx.fillRect(0, 0, W, H);
+
+  ctx.beginPath();
+  ctx.arc(CX, CY, 80, 0, Math.PI * 2);
+  ctx.strokeStyle = "rgba(108,92,231,0.15)";
+  ctx.lineWidth = 1;
+  ctx.stroke();
+
+  var bars = 64;
+  var baseRadius = 85;
+  var maxHeight = 50;
+  for (var i = 0; i < bars; i++) {
+    var angle = (i / bars) * Math.PI * 2 - Math.PI / 2;
+    var histIdx = Math.floor((i / bars) * history.length);
+    var h = history[Math.min(histIdx, history.length - 1)];
+    var barHeight = h * maxHeight * (0.5 + 0.5 * Math.abs(Math.sin(angle * 3 + performance.now() * 0.001)));
+    var innerR = baseRadius;
+    var outerR = baseRadius + barHeight;
+    var x1 = CX + Math.cos(angle) * innerR;
+    var y1 = CY + Math.sin(angle) * innerR;
+    var x2 = CX + Math.cos(angle) * outerR;
+    var y2 = CY + Math.sin(angle) * outerR;
+    var intensity = h;
+    var r = Math.floor(108 + intensity * 80);
+    var g = Math.floor(92 + intensity * 40);
+    var b = Math.floor(231 - intensity * 40);
+    var alpha = 0.4 + intensity * 0.6;
+    ctx.beginPath();
+    ctx.moveTo(x1, y1);
+    ctx.lineTo(x2, y2);
+    ctx.strokeStyle = "rgba(" + r + "," + g + "," + b + "," + alpha + ")";
+    ctx.lineWidth = 2.5;
+    ctx.lineCap = "round";
+    ctx.stroke();
+  }
+
+  var dotSize = 6 + currentLevel * 8;
+  var dotGrad = ctx.createRadialGradient(CX, CY, 0, CX, CY, dotSize * 2);
+  dotGrad.addColorStop(0, "rgba(162,155,254," + (0.6 + currentLevel * 0.4) + ")");
+  dotGrad.addColorStop(1, "rgba(108,92,231,0)");
+  ctx.beginPath();
+  ctx.arc(CX, CY, dotSize * 2, 0, Math.PI * 2);
+  ctx.fillStyle = dotGrad;
+  ctx.fill();
+  ctx.beginPath();
+  ctx.arc(CX, CY, dotSize, 0, Math.PI * 2);
+  ctx.fillStyle = "rgba(162,155,254," + (0.8 + currentLevel * 0.2) + ")";
+  ctx.fill();
+}
+draw();
+</script>
+</body>
+</html>
+
