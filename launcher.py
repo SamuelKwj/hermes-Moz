@@ -7,10 +7,23 @@ import time
 import urllib.request
 from pathlib import Path
 
+SOURCE_ROOT = Path(__file__).resolve().parent
+VENV_PYTHON = SOURCE_ROOT / ".venv" / "Scripts" / "python.exe"
+
+if not getattr(sys, "frozen", False) and VENV_PYTHON.exists():
+    try:
+        current_python = Path(sys.executable).resolve()
+        venv_python = VENV_PYTHON.resolve()
+    except OSError:
+        current_python = Path(sys.executable)
+        venv_python = VENV_PYTHON
+    if current_python != venv_python:
+        os.execv(str(venv_python), [str(venv_python), str(Path(__file__).resolve()), *sys.argv[1:]])
+
 import uvicorn
 import webview
 
-ROOT = Path(getattr(sys, "_MEIPASS", Path(__file__).resolve().parent))
+ROOT = Path(getattr(sys, "_MEIPASS", SOURCE_ROOT))
 BACKEND_DIR = ROOT / "backend"
 
 if BACKEND_DIR.exists():
@@ -25,6 +38,20 @@ configure_model_cache()
 configure_logging()
 logger = logging.getLogger("launcher")
 _tray_icon = None
+
+
+class DesktopApi:
+    def __init__(self):
+        self._window = None
+
+    def _bind_window(self, window):
+        self._window = window
+
+    def hide_window(self):
+        if self._window is None:
+            return {"ok": False, "message": "Window is not ready."}
+        self._window.hide()
+        return {"ok": True}
 
 
 class UvicornThread(threading.Thread):
@@ -110,6 +137,7 @@ def main():
     wait_for_backend(host, port)
 
     logger.info("Launching desktop widget...")
+    desktop_api = DesktopApi()
     window = webview.create_window(
         title="Voice Assistant",
         url=f"http://{host}:{port}",
@@ -119,7 +147,10 @@ def main():
         on_top=bool(settings["ui"].get("always_on_top", True)),
         resizable=False,
         easy_drag=False,
+        draggable=True,
+        js_api=desktop_api,
     )
+    desktop_api._bind_window(window)
 
     def on_started():
         global _tray_icon

@@ -22,6 +22,94 @@ CHANNELS = 1
 BLOCK_DURATION = 0.05  # 50ms blocks for smooth level updates
 
 
+def _coerce_device_index(value) -> int | None:
+    if value is None or value == "":
+        return None
+    try:
+        index = int(value)
+    except (TypeError, ValueError):
+        return None
+    return index if index >= 0 else None
+
+
+def _device_has_channels(index: int, kind: str) -> bool:
+    channel_key = "max_input_channels" if kind == "input" else "max_output_channels"
+    try:
+        device = sd.query_devices(index)
+    except Exception:
+        return False
+    return int(device.get(channel_key, 0)) > 0
+
+
+def _first_available_device(kind: str) -> int | None:
+    channel_key = "max_input_channels" if kind == "input" else "max_output_channels"
+    try:
+        devices = sd.query_devices()
+    except Exception:
+        logger.exception("Failed to query audio devices.")
+        return None
+
+    for index, device in enumerate(devices):
+        if int(device.get(channel_key, 0)) > 0:
+            return index
+    return None
+
+
+def _valid_sample_rate(device_index: int, kind: str) -> int | None:
+    try:
+        device = sd.query_devices(device_index)
+    except Exception:
+        return None
+
+    candidate_rates = [SAMPLE_RATE]
+    default_rate = int(float(device.get("default_samplerate", 0) or 0))
+    if default_rate and default_rate not in candidate_rates:
+        candidate_rates.append(default_rate)
+
+    check_settings = sd.check_input_settings if kind == "input" else sd.check_output_settings
+    for sample_rate in candidate_rates:
+        try:
+            check_settings(
+                device=device_index,
+                channels=CHANNELS,
+                dtype="float32",
+                samplerate=sample_rate,
+            )
+            return sample_rate
+        except Exception:
+            continue
+    return None
+
+
+def _resolve_audio_device(kind: str, configured_device) -> tuple[int, int] | tuple[None, None]:
+    configured_index = _coerce_device_index(configured_device)
+    if configured_index is not None:
+        sample_rate = _valid_sample_rate(configured_index, kind)
+        if sample_rate is not None:
+            return configured_index, sample_rate
+        logger.warning("Configured %s audio device %s is unavailable.", kind, configured_index)
+
+    default_position = 0 if kind == "input" else 1
+    try:
+        default_index = _coerce_device_index(sd.default.device[default_position])
+    except Exception:
+        default_index = None
+    if default_index is not None:
+        sample_rate = _valid_sample_rate(default_index, kind)
+        if sample_rate is not None:
+            return default_index, sample_rate
+
+    while True:
+        fallback_index = _first_available_device(kind)
+        if fallback_index is None:
+            return None, None
+        sample_rate = _valid_sample_rate(fallback_index, kind)
+        if sample_rate is not None:
+            logger.info("Using fallback %s audio device %s at %s Hz.", kind, fallback_index, sample_rate)
+            return fallback_index, sample_rate
+        return None, None
+
+
 class VoicePipeline:
     def __init__(self):
         self.hermes = HermesClient()
@@ -29,6 +117,7 @@ class VoicePipeline:
         self._frames: list[np.ndarray] = []
         self._level_callback = None
         self._stream = None
+        self._record_sample_rate = SAMPLE_RATE
 
     def set_level_callback(self, cb):
         self._level_callback = cb
@@ -41,14 +130,17 @@ class VoicePipeline:
 
         settings = load_settings()
         audio_settings = settings["audio"]
-        input_device = audio_settings.get("input_device")
+        input_device, sample_rate = _resolve_audio_device("input", audio_settings.get("input_device"))
+        if input_device is None:
+            raise RuntimeError("没有检测到可用麦克风，请在 Windows 声音设置里启用输入设备。")
+        self._record_sample_rate = sample_rate or SAMPLE_RATE
 
         self._frames = []
         self._stream = sd.InputStream(
-            samplerate=SAMPLE_RATE,
+            samplerate=self._record_sample_rate,
             channels=CHANNELS,
             dtype="float32",
-            blocksize=int(SAMPLE_RATE * BLOCK_DURATION),
+            blocksize=int(self._record_sample_rate * BLOCK_DURATION),
             device=input_device,
             callback=self._audio_callback,
         )
@@ -89,7 +181,7 @@ class VoicePipeline:
             rms = float(np.sqrt(np.mean(audio**2)))
             threshold = float(audio_settings.get("vad_threshold", 0.012))
             min_seconds = float(audio_settings.get("min_record_seconds", 0.35))
-            duration = len(audio) / SAMPLE_RATE
+            duration = len(audio) / self._record_sample_rate
             if duration < min_seconds:
                 raise ValueError("录音太短，请按住说完再松开。")
             if rms < threshold:
@@ -100,7 +192,7 @@ class VoicePipeline:
         with wave.open(path, "wb") as wf:
             wf.setnchannels(CHANNELS)
             wf.setsampwidth(2)
-            wf.setframerate(SAMPLE_RATE)
+            wf.setframerate(self._record_sample_rate)
             wf.writeframes((audio * 32767).astype(np.int16).tobytes())
         return path
 
@@ -125,14 +217,15 @@ class VoicePipeline:
 
     # ── pipeline ───────────────────────────────────────────────────
 
-    async def run_turn(self, wav_path: str) -> dict:
+    async def run_turn(self, wav_path: str, history: list = None) -> dict:
         """Full turn: transcribe → LLM → synthesize → play."""
+        history = history or []
         # 1. STT
         text = await transcribe(wav_path)
         logger.info("STT: %s", text)
 
         # 2. Hermes LLM
-        reply = await self.hermes.chat(text)
+        reply = await self.hermes.chat(text, history)
         logger.info("LLM: %s", reply)
 
         # 3. TTS
@@ -157,7 +250,9 @@ class VoicePipeline:
 
         settings = load_settings()
         audio_settings = settings["audio"]
-        output_device = audio_settings.get("output_device")
+        output_device, output_sample_rate = _resolve_audio_device("output", audio_settings.get("output_device"))
+        if output_device is None:
+            raise RuntimeError("没有检测到可用扬声器，请在 Windows 声音设置里启用输出设备。")
         output_volume = float(audio_settings.get("output_volume", 1.0))
 
         fd, wav_path = tempfile.mkstemp(suffix=".wav")
@@ -165,7 +260,7 @@ class VoicePipeline:
         try:
             subprocess.run(
                 ["ffmpeg", "-y", "-i", path, "-f", "wav", "-acodec", "pcm_s16le",
-                 "-ar", str(SAMPLE_RATE), "-ac", "1", wav_path],
+                 "-ar", str(output_sample_rate or SAMPLE_RATE), "-ac", "1", wav_path],
                 capture_output=True, check=True,
             )
 
@@ -181,3 +276,4 @@ class VoicePipeline:
                 os.unlink(wav_path)
             except OSError:
                 pass
+

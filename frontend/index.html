@@ -3,321 +3,350 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>Voice Widget</title>
+<title>语音助手</title>
 <style>
-  :root {
-    --bg: #0a0a0f;
-    --surface: #141420;
-    --accent: #6c5ce7;
-    --accent-glow: #a29bfe;
-    --text: #e0e0f0;
-    --text-dim: #8888a0;
-    --danger: #e74c3c;
-    --ok: #2ecc71;
-    --warn: #f39c12;
-    --line: rgba(255,255,255,0.1);
-    --radius: 20px;
-  }
-  * { margin: 0; padding: 0; box-sizing: border-box; }
-  body {
-    background: #0a0a0f;
-    font-family: "Microsoft YaHei", "Segoe UI", system-ui, sans-serif;
-    color: var(--text);
-    overflow: hidden;
-    user-select: none;
-  }
-  .widget {
-    width: 320px;
-    min-height: 480px;
-    background: var(--bg);
-    border-radius: var(--radius);
-    border: 1px solid rgba(108, 92, 231, 0.25);
-    box-shadow: 0 0 60px rgba(108, 92, 231, 0.15), 0 8px 32px rgba(0,0,0,0.5);
-    display: flex;
-    flex-direction: column;
-    align-items: center;
-    padding: 24px 20px;
-    gap: 20px;
-    position: relative;
-    overflow: hidden;
-  }
-  .widget::before {
-    content: "";
-    position: absolute;
-    inset: -40px;
-    background: radial-gradient(circle at 50% 30%, rgba(108,92,231,0.12), transparent 70%);
-    pointer-events: none;
-  }
-  .header {
-    width: 100%;
-    display: flex;
-    align-items: center;
-    justify-content: space-between;
-    font-size: 13px;
-    color: var(--text-dim);
-    letter-spacing: 0.04em;
-    z-index: 1;
-    -webkit-app-region: drag;
-  }
-  .brand {
-    display: flex;
-    align-items: center;
-    gap: 8px;
-  }
-  .header .dot {
-    width: 8px; height: 8px;
-    border-radius: 50%;
-    background: var(--ok);
-    box-shadow: 0 0 8px var(--ok);
-    transition: all 0.3s;
-  }
-  .header .dot.off { background: #555; box-shadow: none; }
-  .icon-btn {
-    width: 28px; height: 28px;
-    border: 1px solid var(--line);
-    border-radius: 8px;
-    background: rgba(255,255,255,0.04);
-    color: var(--text);
-    cursor: pointer;
-    display: flex;
-    align-items: center;
-    justify-content: center;
-    -webkit-app-region: no-drag;
-  }
-  .icon-btn:hover { border-color: rgba(162,155,254,0.5); }
-  .icon-btn svg {
-    width: 16px; height: 16px;
-    fill: none; stroke: currentColor; stroke-width: 2;
-  }
-  .viz-container {
-    position: relative;
-    width: 200px; height: 200px;
-    z-index: 1;
-    -webkit-app-region: no-drag;
-    border-radius: 50%;
-    background: rgba(8, 8, 18, 0.28);
-  }
-  canvas#viz {
-    width: 200px; height: 200px;
-    display: block;
-  }
-  .mic-btn {
-    width: 72px; height: 72px;
-    border-radius: 50%;
-    border: 2px solid rgba(108,92,231,0.4);
-    background: var(--surface);
-    cursor: pointer;
-    display: flex;
-    align-items: center;
-    justify-content: center;
-    transition: all 0.25s ease;
-    z-index: 1;
-    -webkit-app-region: no-drag;
-    position: relative;
-  }
-  .mic-btn:hover {
-    border-color: var(--accent);
-    box-shadow: 0 0 24px rgba(108,92,231,0.3);
-  }
-  .mic-btn.recording {
-    border-color: var(--danger);
-    box-shadow: 0 0 32px rgba(231,76,60,0.4);
-    animation: pulse-btn 1.5s ease-in-out infinite;
-  }
-  .mic-btn.processing {
-    border-color: #f39c12;
-    box-shadow: 0 0 24px rgba(243,156,18,0.3);
-  }
-  @keyframes pulse-btn {
-    0%, 100% { box-shadow: 0 0 16px rgba(231,76,60,0.3); }
-    50% { box-shadow: 0 0 40px rgba(231,76,60,0.6); }
-  }
-  .mic-btn svg {
-    width: 28px; height: 28px;
-    fill: none; stroke: var(--text); stroke-width: 2;
-    transition: all 0.25s;
-  }
-  .mic-btn.recording svg { stroke: var(--danger); }
-  .transcript {
-    width: 100%;
-    max-height: 120px;
-    overflow-y: auto;
-    font-size: 13px;
-    line-height: 1.5;
-    z-index: 1;
-    -webkit-app-region: no-drag;
-    display: flex;
-    flex-direction: column;
-    gap: 8px;
-  }
-  .transcript .msg {
-    padding: 8px 12px;
-    border-radius: 12px;
-    max-width: 90%;
-    word-break: break-word;
-  }
-  .transcript .msg.user {
-    align-self: flex-end;
-    background: rgba(108,92,231,0.2);
-    border: 1px solid rgba(108,92,231,0.3);
-  }
-  .transcript .msg.assistant {
-    align-self: flex-start;
-    background: rgba(255,255,255,0.06);
-    border: 1px solid rgba(255,255,255,0.08);
-  }
-  .status {
-    font-size: 11px;
-    color: var(--text-dim);
-    letter-spacing: 0.03em;
-    z-index: 1;
-    text-align: center;
-    min-height: 16px;
-    transition: color 0.3s;
-  }
-  .status.recording { color: var(--danger); }
-  .status.processing { color: #f39c12; }
-  .panel, .modal {
-    position: absolute;
-    inset: 0;
-    z-index: 5;
-    background: rgba(10,10,15,0.96);
-    backdrop-filter: blur(14px);
-    -webkit-app-region: no-drag;
-  }
-  .panel.hidden, .modal.hidden { display: none; }
-  .panel {
-    padding: 18px;
-    overflow-y: auto;
-  }
-  .panel-head, .modal-head {
-    display: flex;
-    align-items: center;
-    justify-content: space-between;
-    margin-bottom: 14px;
-  }
-  .panel-title, .modal-title {
-    font-size: 15px;
-    font-weight: 600;
-  }
-  .settings-group {
-    border-top: 1px solid var(--line);
-    padding-top: 12px;
-    margin-top: 12px;
-  }
-  .settings-group h2 {
-    font-size: 12px;
-    font-weight: 600;
-    color: var(--text-dim);
-    margin-bottom: 10px;
-  }
-  .field {
-    display: flex;
-    flex-direction: column;
-    gap: 6px;
-    margin-bottom: 10px;
-    font-size: 12px;
-    color: var(--text-dim);
-  }
-  .field.row {
-    flex-direction: row;
-    align-items: center;
-    justify-content: space-between;
-  }
-  select, input[type="text"], input[type="number"] {
-    width: 100%;
-    min-height: 32px;
-    border-radius: 8px;
-    border: 1px solid var(--line);
-    background: rgba(255,255,255,0.06);
-    color: var(--text);
-    padding: 6px 8px;
-    font: inherit;
-  }
-  input[type="range"] { width: 100%; }
-  input[type="checkbox"] { width: 16px; height: 16px; }
-  .actions {
-    display: flex;
-    gap: 8px;
-    margin-top: 14px;
-  }
-  .text-btn {
-    flex: 1;
-    min-height: 34px;
-    border-radius: 8px;
-    border: 1px solid var(--line);
-    background: rgba(255,255,255,0.06);
-    color: var(--text);
-    cursor: pointer;
-    font: inherit;
-  }
-  .text-btn.primary {
-    border-color: rgba(108,92,231,0.6);
-    background: rgba(108,92,231,0.28);
-  }
-  .check-list {
-    display: flex;
-    flex-direction: column;
-    gap: 8px;
-  }
-  .check-item {
-    display: grid;
-    grid-template-columns: 10px 1fr;
-    gap: 8px;
-    align-items: start;
-    font-size: 12px;
-    color: var(--text-dim);
-  }
-  .check-dot {
-    width: 8px; height: 8px;
-    border-radius: 50%;
-    margin-top: 5px;
-    background: #555;
-  }
-  .check-dot.ok { background: var(--ok); box-shadow: 0 0 8px rgba(46,204,113,0.6); }
-  .check-dot.warn { background: var(--warn); box-shadow: 0 0 8px rgba(243,156,18,0.5); }
-  .check-main { color: var(--text); }
-  .check-sub {
-    margin-top: 2px;
-    line-height: 1.35;
-    word-break: break-all;
-  }
-  .modal {
-    display: flex;
-    align-items: center;
-    justify-content: center;
-    padding: 18px;
-  }
-  .modal-box {
-    width: 100%;
-    border: 1px solid rgba(108,92,231,0.28);
-    border-radius: 12px;
-    background: rgba(20,20,32,0.94);
-    padding: 16px;
-  }
+:root {
+  --bg: #0a0a0f;
+  --surface: #141420;
+  --accent: #6c5ce7;
+  --accent-glow: #a29bfe;
+  --text: #e0e0f0;
+  --text-dim: #8888a0;
+  --danger: #e74c3c;
+  --ok: #2ecc71;
+  --warn: #f39c12;
+  --line: rgba(255,255,255,0.1);
+  --radius: 20px;
+}
+* { margin: 0; padding: 0; box-sizing: border-box; }
+body {
+  background: #0a0a0f;
+  font-family: "Microsoft YaHei", "Segoe UI", system-ui, sans-serif;
+  color: var(--text);
+  overflow: hidden;
+  user-select: none;
+}
+.widget {
+  width: 360px;
+  min-height: 560px;
+  background: var(--bg);
+  border-radius: var(--radius);
+  border: 1px solid rgba(108, 92, 231, 0.25);
+  box-shadow: 0 0 60px rgba(108, 92, 231, 0.15), 0 8px 32px rgba(0,0,0,0.5);
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  padding: 0;
+  gap: 20px;
+  position: relative;
+  overflow: hidden;
+}
+.widget::before {
+  content: "";
+  position: absolute;
+  inset: -40px;
+  background: radial-gradient(circle at 50% 30%, rgba(108,92,231,0.12), transparent 70%);
+  pointer-events: none;
+}
+/* 头部可拖动区域 */
+.header {
+  position: relative;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 13px;
+  color: var(--text-dim);
+  letter-spacing: 0.04em;
+  z-index: 10;
+  -webkit-app-region: drag;
+  padding: 8px 16px;
+  height: 40px;
+  width: 100%;
+}
+.header .dot {
+  width: 8px; height: 8px;
+  border-radius: 50%;
+  background: var(--ok);
+  box-shadow: 0 0 8px var(--ok);
+  transition: all 0.3s;
+}
+.header .dot.off { background: #555; box-shadow: none; }
+.header-actions {
+  position: absolute;
+  right: 12px;
+  top: 50%;
+  transform: translateY(-50%);
+  display: flex;
+  gap: 8px;
+  -webkit-app-region: no-drag;
+}
+.icon-btn {
+  width: 28px;
+  height: 28px;
+  border: 1px solid var(--line);
+  border-radius: 6px;
+  background: rgba(255,255,255,0.04);
+  color: var(--text);
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  transition: all 0.2s;
+}
+.icon-btn:hover { border-color: rgba(162,155,254,0.5); }
+.icon-btn svg {
+  width: 16px;
+  height: 16px;
+  fill: none;
+  stroke: currentColor;
+  stroke-width: 2;
+}
+#closeBtn {
+  border: none;
+  background: transparent;
+  color: rgba(255,255,255,0.7);
+  font-size: 18px;
+  font-weight: bold;
+  padding: 0;
+}
+#closeBtn:hover {
+  background: rgba(255, 68, 68, 0.3);
+  color: #ff4444;
+}
+.viz-container {
+  position: relative;
+  width: 200px; height: 200px;
+  z-index: 1;
+  -webkit-app-region: no-drag;
+  border-radius: 50%;
+  background:
+    radial-gradient(circle at center, rgba(162,155,254,0.28) 0 5px, transparent 6px),
+    radial-gradient(circle at center, transparent 0 74px, rgba(162,155,254,0.12) 75px 76px, rgba(108,92,231,0.20) 78px 80px, transparent 82px);
+}
+canvas#viz {
+  width: 200px; height: 200px;
+  display: block;
+}
+.mic-btn {
+  width: 72px; height: 72px;
+  border-radius: 50%;
+  border: 2px solid rgba(108,92,231,0.4);
+  background: var(--surface);
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  transition: all 0.25s ease;
+  z-index: 1;
+  -webkit-app-region: no-drag;
+  position: relative;
+}
+.mic-btn:hover {
+  border-color: var(--accent);
+  box-shadow: 0 0 24px rgba(108,92,231,0.3);
+}
+.mic-btn.recording {
+  border-color: var(--danger);
+  box-shadow: 0 0 32px rgba(231,76,60,0.4);
+  animation: pulse-btn 1.5s ease-in-out infinite;
+}
+.mic-btn.processing {
+  border-color: #f39c12;
+  box-shadow: 0 0 24px rgba(243,156,18,0.3);
+}
+@keyframes pulse-btn {
+  0%, 100% { box-shadow: 0 0 16px rgba(231,76,60,0.3); }
+  50% { box-shadow: 0 0 40px rgba(231,76,60,0.6); }
+}
+.mic-btn svg {
+  width: 28px; height: 28px;
+  fill: none; stroke: var(--text); stroke-width: 2;
+  transition: all 0.25s;
+}
+.mic-btn.recording svg { stroke: var(--danger); }
+.transcript {
+  width: 100%;
+  max-height: 120px;
+  overflow-y: auto;
+  font-size: 13px;
+  line-height: 1.5;
+  z-index: 1;
+  -webkit-app-region: no-drag;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  padding: 0 16px;
+}
+.transcript .msg {
+  padding: 8px 12px;
+  border-radius: 12px;
+  max-width: 90%;
+  word-break: break-word;
+}
+.transcript .msg.user {
+  align-self: flex-end;
+  background: rgba(108,92,231,0.2);
+  border: 1px solid rgba(108,92,231,0.3);
+}
+.transcript .msg.assistant {
+  align-self: flex-start;
+  background: rgba(255,255,255,0.06);
+  border: 1px solid rgba(255,255,255,0.08);
+}
+.status {
+  font-size: 11px;
+  color: var(--text-dim);
+  letter-spacing: 0.03em;
+  z-index: 1;
+  text-align: center;
+  min-height: 16px;
+  transition: color 0.3s;
+  padding-bottom: 20px;
+}
+.status.recording { color: var(--danger); }
+.status.processing { color: #f39c12; }
+.panel, .modal {
+  position: absolute;
+  inset: 0;
+  z-index: 20;
+  background: rgba(10,10,15,0.96);
+  backdrop-filter: blur(14px);
+  -webkit-app-region: no-drag;
+}
+.panel.hidden, .modal.hidden { display: none; }
+.panel {
+  padding: 18px;
+  overflow-y: auto;
+}
+.panel-head, .modal-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin-bottom: 14px;
+}
+.panel-title, .modal-title {
+  font-size: 15px;
+  font-weight: 600;
+}
+.settings-group {
+  border-top: 1px solid var(--line);
+  padding-top: 12px;
+  margin-top: 12px;
+}
+.settings-group h2 {
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--text-dim);
+  margin-bottom: 10px;
+}
+.field {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  margin-bottom: 10px;
+  font-size: 12px;
+  color: var(--text-dim);
+}
+.field.row {
+  flex-direction: row;
+  align-items: center;
+  justify-content: space-between;
+}
+select, input[type="text"], input[type="number"] {
+  width: 100%;
+  min-height: 32px;
+  border-radius: 8px;
+  border: 1px solid var(--line);
+  background: rgba(255,255,255,0.06);
+  color: var(--text);
+  padding: 6px 8px;
+  font: inherit;
+}
+input[type="range"] { width: 100%; }
+input[type="checkbox"] { width: 16px; height: 16px; }
+.actions {
+  display: flex;
+  gap: 8px;
+  margin-top: 14px;
+}
+.text-btn {
+  flex: 1;
+  min-height: 34px;
+  border-radius: 8px;
+  border: 1px solid var(--line);
+  background: rgba(255,255,255,0.06);
+  color: var(--text);
+  cursor: pointer;
+  font: inherit;
+}
+.text-btn.primary {
+  border-color: rgba(108,92,231,0.6);
+  background: rgba(108,92,231,0.28);
+}
+.check-list {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+.check-item {
+  display: grid;
+  grid-template-columns: 10px 1fr;
+  gap: 8px;
+  align-items: start;
+  font-size: 12px;
+  color: var(--text-dim);
+}
+.check-dot {
+  width: 8px; height: 8px;
+  border-radius: 50%;
+  margin-top: 5px;
+  background: #555;
+}
+.check-dot.ok { background: var(--ok); box-shadow: 0 0 8px rgba(46,204,113,0.6); }
+.check-dot.warn { background: var(--warn); box-shadow: 0 0 8px rgba(243,156,18,0.5); }
+.check-main { color: var(--text); }
+.check-sub {
+  margin-top: 2px;
+  line-height: 1.35;
+  word-break: break-all;
+}
+.modal {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 18px;
+}
+.modal-box {
+  width: 100%;
+  border: 1px solid rgba(108,92,231,0.28);
+  border-radius: 12px;
+  background: rgba(20,20,32,0.94);
+  padding: 16px;
+}
 </style>
 </head>
 <body>
 
 <div class="widget">
-  <div class="header">
-    <div class="brand">
-      <span class="dot" id="statusDot"></span>
-      <span>语音助手</span>
+  <div class="header pywebview-drag-region">
+    <span class="dot" id="statusDot"></span>
+    <span>语音助手</span>
+    <div class="header-actions">
+      <button class="icon-btn" id="settingsBtn" title="设置">
+        <svg viewBox="0 0 24 24">
+          <circle cx="12" cy="12" r="3"></circle>
+          <path d="M19.4 15a1.7 1.7 0 0 0 .3 1.9l.1.1a2 2 0 1 1-2.8 2.8l-.1-.1a1.7 1.7 0 0 0-1.9-.3 1.7 1.7 0 0 0-1 1.5V21a2 2 0 1 1-4 0v-.1a1.7 1.7 0 0 0-1-1.5 1.7 1.7 0 0 0-1.9.3l-.1.1a2 2 0 1 1-2.8-2.8l.1-.1a1.7 1.7 0 0 0 .3-1.9 1.7 1.7 0 0 0-1.5-1H3a2 2 0 1 1 0-4h.1a1.7 1.7 0 0 0 1.5-1 1.7 1.7 0 0 0-.3-1.9l-.1-.1a2 2 0 1 1 2.8-2.8l.1.1a1.7 1.7 0 0 0 1.9.3h.1a1.7 1.7 0 0 0 .9-1.5V3a2 2 0 1 1 4 0v.1a1.7 1.7 0 0 0 1 1.5 1.7 1.7 0 0 0 1.9-.3l.1-.1a2 2 0 1 1 2.8 2.8l-.1.1a1.7 1.7 0 0 0-.3 1.9v.1a1.7 1.7 0 0 0 1.5.9h.1a2 2 0 1 1 0 4h-.1a1.7 1.7 0 0 0-1.5 1z"></path>
+        </svg>
+      </button>
+      <button class="icon-btn" id="closeBtn" title="最小化到托盘">×</button>
     </div>
-    <button class="icon-btn" id="settingsBtn" title="设置">
-      <svg viewBox="0 0 24 24">
-        <circle cx="12" cy="12" r="3"></circle>
-        <path d="M19.4 15a1.7 1.7 0 0 0 .3 1.9l.1.1a2 2 0 1 1-2.8 2.8l-.1-.1a1.7 1.7 0 0 0-1.9-.3 1.7 1.7 0 0 0-1 1.5V21a2 2 0 1 1-4 0v-.1a1.7 1.7 0 0 0-1-1.5 1.7 1.7 0 0 0-1.9.3l-.1.1a2 2 0 1 1-2.8-2.8l.1-.1a1.7 1.7 0 0 0 .3-1.9 1.7 1.7 0 0 0-1.5-1H3a2 2 0 1 1 0-4h.1a1.7 1.7 0 0 0 1.5-1 1.7 1.7 0 0 0-.3-1.9l-.1-.1a2 2 0 1 1 2.8-2.8l.1.1a1.7 1.7 0 0 0 1.9.3h.1a1.7 1.7 0 0 0 .9-1.5V3a2 2 0 1 1 4 0v.1a1.7 1.7 0 0 0 1 1.5 1.7 1.7 0 0 0 1.9-.3l.1-.1a2 2 0 1 1 2.8 2.8l-.1.1a1.7 1.7 0 0 0-.3 1.9v.1a1.7 1.7 0 0 0 1.5.9h.1a2 2 0 1 1 0 4h-.1a1.7 1.7 0 0 0-1.5 1z"></path>
-      </svg>
-    </button>
   </div>
 
   <div class="viz-container">
     <canvas id="viz" width="200" height="200"></canvas>
   </div>
 
-  <button class="mic-btn" id="micBtn" title="点击说话">
+  <button class="mic-btn" id="micBtn" title="按住说话，松开发送">
     <svg viewBox="0 0 24 24">
       <path d="M12 1a3 3 0 0 0-3 3v8a3 3 0 0 0 6 0V4a3 3 0 0 0-3-3z"/>
       <path d="M19 10v2a7 7 0 0 1-6 6.92V22h-2v-3.08A7 7 0 0 1 5 12v-2"/>
@@ -396,19 +425,20 @@
 <script>
 var appConfig = window.VOICE_WIDGET_CONFIG || { host: location.hostname || "127.0.0.1", port: location.port || 8765 };
 var ws = new WebSocket("ws://" + appConfig.host + ":" + appConfig.port + "/ws");
-var state = "idle";
+var state = "idle"; // idle | recording | processing
+var chatHistory = []; // 多轮对话历史
 var settingsData = null;
 var devicesData = { inputs: [], outputs: [] };
 var statusData = null;
 
-ws.onopen = function() { console.log("WS connected"); };
-ws.onclose = function() {
+ws.onopen = () => console.log("WS connected");
+ws.onclose = () => {
   console.log("WS closed");
   setStatus("连接已断开");
 };
 
-ws.onmessage = function(e) {
-  var msg = JSON.parse(e.data);
+ws.onmessage = (e) => {
+  const msg = JSON.parse(e.data);
   switch (msg.type) {
     case "level":
       updateViz(msg.rms);
@@ -470,7 +500,7 @@ function collectChecks() {
     checkItem("扬声器", devicesData.outputs.length > 0, devicesData.outputs.length + " 个输出设备"),
     checkItem("Hermes Gateway", hermes.reachable, hermes.base_url || "未配置"),
     checkItem("STT", statusData && statusData.stt_ready, statusData && statusData.stt_ready ? "模型已就绪" : "模型预热中或失败"),
-    checkItem("TTS", statusData && statusData.tts_ready, statusData && statusData.tts_ready ? "语音已就绪" : "语音预热中或失败")
+    checkItem("TTS", statusData && statusData.tts_ready, statusData && statusData.tts_ready ? "语音已就绪" : "模型预热中或失败")
   ];
 }
 
@@ -503,12 +533,12 @@ function fillDeviceSelect(select, devices, currentValue) {
   select.innerHTML = "";
   var defaultOption = document.createElement("option");
   defaultOption.value = "";
-  defaultOption.textContent = "系统默认";
+  defaultOption.textContent = "自动选择";
   select.appendChild(defaultOption);
   devices.forEach(function(device) {
     var option = document.createElement("option");
     option.value = String(device.index);
-    option.textContent = device.name;
+    option.textContent = device.index + " - " + device.name;
     select.appendChild(option);
   });
   select.value = currentValue === null || currentValue === undefined ? "" : String(currentValue);
@@ -614,9 +644,9 @@ function completeSetup() {
 
 function setState(s) {
   state = s;
-  var btn = $("micBtn");
-  var dot = $("statusDot");
-  var status = $("status");
+  const btn = document.getElementById("micBtn");
+  const dot = document.getElementById("statusDot");
+  const status = document.getElementById("status");
   btn.classList.remove("recording", "processing");
   dot.classList.remove("off");
   status.classList.remove("recording", "processing");
@@ -636,56 +666,70 @@ function setState(s) {
 }
 
 function setStatus(text) {
-  $("status").textContent = text;
+  document.getElementById("status").textContent = text;
 }
 
 function addMessage(role, text) {
-  var div = document.createElement("div");
+  chatHistory.push({ role, content: text });
+  const div = document.createElement("div");
   div.className = "msg " + role;
   div.textContent = text;
-  var container = $("transcript");
+  const container = document.getElementById("transcript");
   container.appendChild(div);
   container.scrollTop = container.scrollHeight;
 }
 
-function startTalk() {
+const micBtn = document.getElementById("micBtn");
+let isPressing = false;
+// 鼠标按下开始录音
+micBtn.addEventListener("mousedown", () => {
   if (state === "idle") {
+    isPressing = true;
     ws.send(JSON.stringify({ cmd: "start_record" }));
   }
-}
-
-function stopTalk() {
-  if (state === "recording") {
-    ws.send(JSON.stringify({ cmd: "stop_record" }));
-  }
-}
-
-var micBtn = $("micBtn");
-micBtn.addEventListener("pointerdown", function(event) {
-  event.preventDefault();
-  micBtn.setPointerCapture(event.pointerId);
-  startTalk();
 });
-micBtn.addEventListener("pointerup", function(event) {
-  event.preventDefault();
-  stopTalk();
-});
-micBtn.addEventListener("pointercancel", stopTalk);
-micBtn.addEventListener("lostpointercapture", stopTalk);
-
-document.addEventListener("keydown", function(event) {
-  if (event.code === "Space" && !event.repeat) {
-    event.preventDefault();
-    startTalk();
+// 鼠标松开停止录音，发送请求
+micBtn.addEventListener("mouseup", () => {
+  if (state === "recording" && isPressing) {
+    isPressing = false;
+    ws.send(JSON.stringify({ cmd: "stop_record", history: chatHistory }));
   }
 });
-document.addEventListener("keyup", function(event) {
-  if (event.code === "Space") {
-    event.preventDefault();
-    stopTalk();
+micBtn.addEventListener("mouseleave", () => {
+  if (state === "recording" && isPressing) {
+    isPressing = false;
+    ws.send(JSON.stringify({ cmd: "stop_record", history: chatHistory }));
   }
 });
-
+// 空格键快捷支持
+document.addEventListener("keydown", (e) => {
+  if (e.code === "Space" && !e.repeat && state === "idle") {
+    e.preventDefault();
+    isPressing = true;
+    ws.send(JSON.stringify({ cmd: "start_record" }));
+  }
+});
+document.addEventListener("keyup", (e) => {
+  if (e.code === "Space" && state === "recording" && isPressing) {
+    e.preventDefault();
+    isPressing = false;
+    ws.send(JSON.stringify({ cmd: "stop_record", history: chatHistory }));
+  }
+});
+// 关闭按钮逻辑
+document.getElementById("closeBtn").addEventListener("click", async () => {
+  try {
+    if (window.pywebview && window.pywebview.api && window.pywebview.api.hide_window) {
+      const result = await window.pywebview.api.hide_window();
+      if (!result || result.ok) return;
+      throw new Error(result.message || "隐藏窗口失败");
+    }
+    window.close();
+  } catch (error) {
+    console.error(error);
+    setStatus("隐藏失败: " + (error.message || error));
+  }
+});
 $("settingsBtn").addEventListener("click", openSettings);
 $("closeSettingsBtn").addEventListener("click", closeSettings);
 $("refreshStatusBtn").addEventListener("click", refreshStatus);
@@ -694,18 +738,17 @@ $("setupRefreshBtn").addEventListener("click", refreshStatus);
 $("completeSetupBtn").addEventListener("click", completeSetup);
 $("skipSetupBtn").addEventListener("click", completeSetup);
 refreshStatus();
-
-// ── Voice Visualization ────────────────────────────────────────────
-var canvas = document.getElementById("viz");
-var ctx = canvas.getContext("2d");
-var W = canvas.width;
-var H = canvas.height;
-var CX = W / 2;
-var CY = H / 2;
-var currentLevel = 0;
-var targetLevel = 0;
-var levelHistory = [];
-for (var i = 0; i < 120; i++) levelHistory.push(0.18);
+// ── 声纹可视化 ────────────────────────────────────────────
+const canvas = document.getElementById("viz");
+const ctx = canvas.getContext("2d");
+const W = canvas.width;
+const H = canvas.height;
+const CX = W / 2;
+const CY = H / 2;
+let currentLevel = 0;
+let targetLevel = 0;
+let vizHistory = [];
+for (let i = 0; i < 120; i++) vizHistory.push(0.18);
 
 function updateViz(rms) {
   targetLevel = Math.min(1, rms * 14);
@@ -714,57 +757,57 @@ function updateViz(rms) {
 function draw() {
   requestAnimationFrame(draw);
 
-  // Idle breathing when no mic input
-  var t = performance.now();
-  var idleWave = 0.30 + 0.10 * Math.sin(t * 0.002);
-  var effectiveLevel = targetLevel > 0.025 ? Math.max(currentLevel, 0.18) : idleWave;
+  // 空闲呼吸动画
+  const t = performance.now();
+  const idleWave = 0.20 + 0.08 * Math.sin(t * 0.002);
+  const effectiveLevel = targetLevel > 0.025 ? Math.max(currentLevel, 0.18) : idleWave;
 
   currentLevel += (targetLevel - currentLevel) * 0.3;
-  levelHistory.push(effectiveLevel);
-  if (levelHistory.length > 120) levelHistory.shift();
+  vizHistory.push(effectiveLevel);
+  if (vizHistory.length > 120) vizHistory.shift();
 
   ctx.clearRect(0, 0, W, H);
 
-  // ── outer glow ──
-  var glowRadius = 92 + effectiveLevel * 18;
-  var glow = ctx.createRadialGradient(CX, CY, 18, CX, CY, glowRadius);
+  // 外层光晕
+  const glowRadius = 92 + effectiveLevel * 18;
+  const glow = ctx.createRadialGradient(CX, CY, 18, CX, CY, glowRadius);
   glow.addColorStop(0, "rgba(108,92,231,0)");
   glow.addColorStop(0.6, "rgba(108,92,231," + (0.16 + effectiveLevel * 0.22) + ")");
   glow.addColorStop(1, "rgba(108,92,231,0)");
   ctx.fillStyle = glow;
   ctx.fillRect(0, 0, W, H);
 
-  // ── base ring ──
+  // 基础圆环
   ctx.beginPath();
   ctx.arc(CX, CY, 54, 0, Math.PI * 2);
-  ctx.strokeStyle = "rgba(120,230,255,0.24)";
+  ctx.strokeStyle = "rgba(162,155,254,0.45)";
   ctx.lineWidth = 2.5;
   ctx.stroke();
 
-  // ── waveform bars ──
-  var bars = 96;
-  var baseRadius = 52;
-  var maxHeight = 42;
+  // 声纹柱状条
+  const bars = 96;
+  const baseRadius = 52;
+  const maxHeight = 42;
 
-  for (var i = 0; i < bars; i++) {
-    var angle = (i / bars) * Math.PI * 2 - Math.PI / 2;
-    var histIdx = Math.floor((i / bars) * levelHistory.length);
-    var h = levelHistory[Math.min(histIdx, levelHistory.length - 1)];
-    var idlePattern = 0.35 + 0.65 * Math.abs(Math.sin(angle * 6 + t * 0.0018));
-    var audioPattern = 0.68 + 0.32 * Math.abs(Math.sin(angle * 3 + t * 0.004));
-    var barHeight = (18 + h * maxHeight) * idlePattern * audioPattern;
-    var innerR = baseRadius - barHeight * 0.36;
-    var outerR = baseRadius + barHeight;
-    var x1 = CX + Math.cos(angle) * innerR;
-    var y1 = CY + Math.sin(angle) * innerR;
-    var x2 = CX + Math.cos(angle) * outerR;
-    var y2 = CY + Math.sin(angle) * outerR;
-    var intensity = h;
-    var colorPulse = 0.5 + 0.5 * Math.sin(angle * 2 + t * 0.001);
-    var r = Math.floor(80 + colorPulse * 80);
-    var g = Math.floor(180 + intensity * 60);
-    var b = 255;
-    var alpha = 0.82 + intensity * 0.18;
+  for (let i = 0; i < bars; i++) {
+    const angle = (i / bars) * Math.PI * 2 - Math.PI / 2;
+    const histIdx = Math.floor((i / bars) * vizHistory.length);
+    const h = vizHistory[Math.min(histIdx, vizHistory.length - 1)];
+    const idlePattern = 0.35 + 0.65 * Math.abs(Math.sin(angle * 6 + t * 0.0018));
+    const audioPattern = 0.68 + 0.32 * Math.abs(Math.sin(angle * 3 + t * 0.004));
+    const barHeight = (18 + h * maxHeight) * idlePattern * audioPattern;
+    const innerR = baseRadius - barHeight * 0.36;
+    const outerR = baseRadius + barHeight;
+    const x1 = CX + Math.cos(angle) * innerR;
+    const y1 = CY + Math.sin(angle) * innerR;
+    const x2 = CX + Math.cos(angle) * outerR;
+    const y2 = CY + Math.sin(angle) * outerR;
+    const intensity = h;
+    const colorPulse = 0.5 + 0.5 * Math.sin(angle * 2 + t * 0.001);
+    const r = Math.floor(80 + colorPulse * 80);
+    const g = Math.floor(180 + intensity * 60);
+    const b = 255;
+    const alpha = 0.72 + intensity * 0.28;
     ctx.beginPath();
     ctx.moveTo(x1, y1);
     ctx.lineTo(x2, y2);
@@ -774,9 +817,9 @@ function draw() {
     ctx.stroke();
   }
 
-  // ── center dot ──
-  var dotSize = 6 + effectiveLevel * 8;
-  var dotGrad = ctx.createRadialGradient(CX, CY, 0, CX, CY, dotSize * 2);
+  // 中心圆点
+  const dotSize = 6 + effectiveLevel * 8;
+  const dotGrad = ctx.createRadialGradient(CX, CY, 0, CX, CY, dotSize * 2);
   dotGrad.addColorStop(0, "rgba(162,155,254," + (0.7 + effectiveLevel * 0.3) + ")");
   dotGrad.addColorStop(1, "rgba(108,92,231,0)");
   ctx.beginPath();
@@ -792,5 +835,3 @@ draw();
 </script>
 </body>
 </html>
-
-

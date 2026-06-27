@@ -169,7 +169,8 @@ async def websocket_endpoint(ws: WebSocket):
                 try:
                     wav_path = pipeline.stop_recording()
                     await ws.send_json({"type": "status", "state": "processing"})
-                    result = await pipeline.run_turn(wav_path)
+                    history = msg.get("history", [])
+                    result = await pipeline.run_turn(wav_path, history)
                     await ws.send_json({
                         "type": "result",
                         "user": result["user"],
@@ -206,3 +207,4 @@ def main():
 
 if __name__ == "__main__":
     main()
+

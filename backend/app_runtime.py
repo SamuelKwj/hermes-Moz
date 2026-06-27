@@ -68,9 +68,28 @@ def configure_model_cache() -> Path:
 
 
 def prepend_bundled_bin_to_path() -> None:
+    path_parts = [os.environ.get("PATH", "")]
+    if os.name == "nt":
+        try:
+            import winreg
+
+            registry_paths = (
+                (winreg.HKEY_LOCAL_MACHINE, r"SYSTEM\CurrentControlSet\Control\Session Manager\Environment"),
+                (winreg.HKEY_CURRENT_USER, "Environment"),
+            )
+            for hive, key_path in registry_paths:
+                with winreg.OpenKey(hive, key_path) as key:
+                    persisted, _ = winreg.QueryValueEx(key, "Path")
+                    if persisted:
+                        path_parts.append(str(persisted))
+        except OSError:
+            pass
+
     bin_dir = resource_path("bin")
     if bin_dir.exists():
-        os.environ["PATH"] = str(bin_dir) + os.pathsep + os.environ.get("PATH", "")
+        path_parts.insert(0, str(bin_dir))
+
+    os.environ["PATH"] = os.pathsep.join(part for part in path_parts if part)
 
 
 def configure_logging(level: int = logging.INFO) -> Path:
