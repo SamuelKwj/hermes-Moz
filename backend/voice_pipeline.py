@@ -60,6 +60,71 @@ def _first_available_device(kind: str) -> int | None:
     return None
 
 
+def _hostapi_name(index: int) -> str:
+    try:
+        device = sd.query_devices(index)
+        hostapi_index = int(device.get("hostapi", -1))
+        return str(sd.query_hostapis(hostapi_index).get("name", ""))
+    except Exception:
+        return ""
+
+
+def _is_mapper_device(index: int) -> bool:
+    try:
+        name = str(sd.query_devices(index).get("name", "")).lower()
+    except Exception:
+        return True
+    mapper_terms = ("mapper", "映射器", "主声音")
+    return any(term in name for term in mapper_terms)
+
+
+def _audio_device_candidates(kind: str, configured_device) -> list[int]:
+    channel_key = "max_input_channels" if kind == "input" else "max_output_channels"
+    candidates: list[int] = []
+
+    def add(index: int | None):
+        if index is None or index in candidates:
+            return
+        if not _device_has_channels(index, kind):
+            return
+        candidates.append(index)
+
+    add(_coerce_device_index(configured_device))
+
+    default_position = 0 if kind == "input" else 1
+    try:
+        add(_coerce_device_index(sd.default.device[default_position]))
+    except Exception:
+        pass
+
+    try:
+        devices = sd.query_devices()
+    except Exception:
+        logger.exception("Failed to query audio devices.")
+        return candidates
+
+    discovered = []
+    for index, device in enumerate(devices):
+        if int(device.get(channel_key, 0)) <= 0:
+            continue
+        if _is_mapper_device(index) and configured_device is None:
+            continue
+        hostapi = _hostapi_name(index)
+        if "WASAPI" in hostapi:
+            priority = 0
+        elif "WDM-KS" in hostapi:
+            priority = 1
+        elif "DirectSound" in hostapi:
+            priority = 2
+        else:
+            priority = 3
+        discovered.append((priority, index))
+
+    for _priority, index in sorted(discovered):
+        add(index)
+    return candidates
+
+
 def _valid_sample_rate(device_index: int, kind: str) -> int | None:
     try:
         device = sd.query_devices(device_index)
@@ -84,6 +149,17 @@ def _valid_sample_rate(device_index: int, kind: str) -> int | None:
         except Exception:
             continue
     return None
+
+
+def _create_input_stream(device_index: int, sample_rate: int, callback):
+    return sd.InputStream(
+        samplerate=sample_rate,
+        channels=CHANNELS,
+        dtype="float32",
+        blocksize=int(sample_rate * BLOCK_DURATION),
+        device=device_index,
+        callback=callback,
+    )
 
 
 def _resolve_audio_device(kind: str, configured_device) -> tuple[int, int] | tuple[None, None]:
@@ -196,29 +272,36 @@ class VoicePipeline:
 
         settings = load_settings()
         audio_settings = settings["audio"]
-        input_device, sample_rate = _resolve_audio_device("input", audio_settings.get("input_device"))
-        if input_device is None:
-            raise RuntimeError("没有检测到可用麦克风，请在 Windows 声音设置里启用输入设备。")
-        self._record_sample_rate = sample_rate or SAMPLE_RATE
-
         self._frames = []
-        self._stream = sd.InputStream(
-            samplerate=self._record_sample_rate,
-            channels=CHANNELS,
-            dtype="float32",
-            blocksize=int(self._record_sample_rate * BLOCK_DURATION),
-            device=input_device,
-            callback=self._audio_callback,
-        )
-        try:
-            self._stream.start()
-            self._recording = True
-        except Exception:
-            self._stream.close()
-            self._stream = None
-            self._frames = []
-            self._recording = False
-            raise
+        last_error = None
+        for input_device in _audio_device_candidates("input", audio_settings.get("input_device")):
+            sample_rate = _valid_sample_rate(input_device, "input")
+            if sample_rate is None:
+                continue
+            stream = None
+            try:
+                stream = _create_input_stream(input_device, sample_rate, self._audio_callback)
+                stream.start()
+                self._stream = stream
+                self._record_sample_rate = sample_rate
+                self._recording = True
+                logger.info("Recording from input device %s at %s Hz.", input_device, sample_rate)
+                return
+            except Exception as exc:
+                last_error = exc
+                logger.warning("Input device %s failed to open: %s", input_device, exc)
+                if stream is not None:
+                    try:
+                        stream.close()
+                    except Exception:
+                        pass
+
+        self._stream = None
+        self._frames = []
+        self._recording = False
+        if last_error is not None:
+            raise RuntimeError(f"麦克风打开失败，已尝试可用输入设备: {last_error}")
+        raise RuntimeError("没有检测到可用麦克风，请在 Windows 声音设置里启用输入设备。")
 
     def stop_recording(self) -> str:
         """Stop, save WAV, return file path."""
