@@ -33,8 +33,21 @@ async def _synthesize_edge_mp3(text: str, tts_settings: dict) -> str:
     os.close(fd)
 
     communicate = edge_tts.Communicate(text, voice, rate=rate, volume=volume)
-    await communicate.save(path)
-    return path
+    try:
+        await communicate.save(path)
+        return path
+    except Exception:
+        try:
+            os.unlink(path)
+        except OSError:
+            pass
+        logger.warning("edge-tts synthesis failed once; retrying.", exc_info=True)
+
+    fd, retry_path = tempfile.mkstemp(suffix=".mp3", prefix="tts_")
+    os.close(fd)
+    communicate = edge_tts.Communicate(text, voice, rate=rate, volume=volume)
+    await communicate.save(retry_path)
+    return retry_path
 
 
 def _native_rate(edge_rate: str) -> int:

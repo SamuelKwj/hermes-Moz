@@ -60,6 +60,11 @@ DEFAULT_SETTINGS: dict[str, Any] = {
         "vad_enabled": True,
         "vad_threshold": 0.012,
         "min_record_seconds": 0.35,
+        "hands_free_silence_seconds": 0.75,
+        "hands_free_min_record_seconds": 1.0,
+        "hands_free_max_seconds": 12.0,
+        "hands_free_trigger_seconds": 0.18,
+        "hands_free_resume_delay_seconds": 0.45,
     },
     "stt": {
         "model": "base",
@@ -87,6 +92,7 @@ DEFAULT_SETTINGS: dict[str, Any] = {
     "ui": {
         "always_on_top": True,
         "hold_to_talk": True,
+        "hands_free": False,
         "hotkey": "Space",
         "start_minimized": False,
         "launch_on_startup": False,

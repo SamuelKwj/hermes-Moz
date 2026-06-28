@@ -6,7 +6,7 @@ import sys
 from pathlib import Path
 
 from fastapi import FastAPI, WebSocket, WebSocketDisconnect
-from fastapi.responses import FileResponse
+from fastapi.responses import FileResponse, HTMLResponse
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 
@@ -96,6 +96,110 @@ async def health():
     return {"ok": True, "stt_ready": _stt_ready, "tts_ready": _tts_ready, "last_error": _last_error}
 
 
+@app.get("/tts-voices")
+async def tts_voices_page():
+    page = """
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Edge TTS Voices</title>
+  <style>
+    body { margin: 0; background: #101117; color: #f4f1ff; font: 14px/1.5 system-ui, sans-serif; }
+    main { max-width: 980px; margin: 0 auto; padding: 24px; }
+    h1 { font-size: 22px; margin: 0 0 12px; }
+    .bar { display: flex; gap: 8px; flex-wrap: wrap; margin-bottom: 16px; }
+    button { border: 1px solid #343548; border-radius: 8px; background: #191b25; color: #f4f1ff; padding: 8px 12px; cursor: pointer; }
+    button.active { border-color: #a29bfe; background: #2d265e; }
+    input { min-width: 240px; flex: 1; border: 1px solid #343548; border-radius: 8px; background: #151720; color: #f4f1ff; padding: 8px 10px; }
+    .count { color: #a9a6bf; margin: 10px 0; }
+    table { width: 100%; border-collapse: collapse; background: #151720; border-radius: 8px; overflow: hidden; }
+    th, td { border-bottom: 1px solid #292b3a; padding: 9px 10px; text-align: left; vertical-align: top; }
+    th { color: #c9c3ff; background: #1d2030; font-weight: 600; }
+    code { color: #9ee7d8; }
+  </style>
+</head>
+<body>
+<main>
+  <h1>Edge TTS 音色</h1>
+  <div class="bar">
+    <button data-locale="zh" class="active">中文</button>
+    <button data-locale="zh-CN">大陆中文</button>
+    <button data-locale="zh-HK">粤语/香港</button>
+    <button data-locale="zh-TW">台湾中文</button>
+    <button data-locale="all">全部</button>
+    <input id="q" placeholder="搜索 ShortName / FriendlyName / Locale">
+  </div>
+  <div class="count" id="count">加载中...</div>
+  <table>
+    <thead><tr><th>ShortName</th><th>Locale</th><th>Gender</th><th>FriendlyName</th></tr></thead>
+    <tbody id="rows"></tbody>
+  </table>
+</main>
+<script>
+let voices = [];
+let locale = "zh";
+const rows = document.getElementById("rows");
+const count = document.getElementById("count");
+const q = document.getElementById("q");
+
+function escapeHtml(text) {
+  return String(text || "").replace(/[&<>"']/g, c => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
+}
+
+async function loadVoices(nextLocale) {
+  locale = nextLocale;
+  document.querySelectorAll("button[data-locale]").forEach(btn => btn.classList.toggle("active", btn.dataset.locale === locale));
+  count.textContent = "加载中...";
+  const res = await fetch("/api/tts/voices?locale=" + encodeURIComponent(locale), { cache: "no-store" });
+  const data = await res.json();
+  voices = data.voices || [];
+  render();
+}
+
+function render() {
+  const needle = q.value.trim().toLowerCase();
+  const filtered = voices.filter(v => !needle || [v.short_name, v.friendly_name, v.locale, v.gender].join(" ").toLowerCase().includes(needle));
+  count.textContent = "显示 " + filtered.length + " / " + voices.length + " 个音色";
+  rows.innerHTML = filtered.map(v => "<tr><td><code>" + escapeHtml(v.short_name) + "</code></td><td>" + escapeHtml(v.locale) + "</td><td>" + escapeHtml(v.gender) + "</td><td>" + escapeHtml(v.friendly_name) + "</td></tr>").join("");
+}
+
+document.querySelectorAll("button[data-locale]").forEach(btn => btn.addEventListener("click", () => loadVoices(btn.dataset.locale)));
+q.addEventListener("input", render);
+loadVoices("zh");
+</script>
+</body>
+</html>
+"""
+    return HTMLResponse(page)
+
+
+@app.get("/api/tts/voices")
+async def tts_voices(locale: str = "zh"):
+    from edge_tts import list_voices
+
+    voices = await list_voices()
+    locale = (locale or "zh").strip()
+    if locale and locale != "all":
+        if locale == "zh":
+            voices = [voice for voice in voices if str(voice.get("Locale", "")).startswith("zh")]
+        else:
+            voices = [voice for voice in voices if voice.get("Locale") == locale]
+
+    simplified = [
+        {
+            "short_name": voice.get("ShortName"),
+            "friendly_name": voice.get("FriendlyName"),
+            "locale": voice.get("Locale"),
+            "gender": voice.get("Gender"),
+        }
+        for voice in voices
+    ]
+    simplified.sort(key=lambda item: (str(item.get("locale")), str(item.get("short_name"))))
+    return {"count": len(simplified), "voices": simplified}
+
+
 @app.get("/api/status")
 async def status():
     settings = load_settings()
@@ -152,15 +256,105 @@ async def websocket_endpoint(ws: WebSocket):
     active_ws = ws
     _event_loop = asyncio.get_running_loop()
     logger.info("WebSocket connected")
+    send_lock = asyncio.Lock()
+    turn_task: asyncio.Task | None = None
+    turn_generation = 0
+    hands_free_enabled = False
+
+    async def send_json(payload: dict):
+        async with send_lock:
+            await ws.send_json(payload)
 
     def level_cb(rms: float):
         if active_ws and _event_loop and _event_loop.is_running():
             asyncio.run_coroutine_threadsafe(
-                active_ws.send_json({"type": "level", "rms": rms}),
+                send_json({"type": "level", "rms": rms}),
                 _event_loop,
             )
 
     pipeline.set_level_callback(level_cb)
+
+    def interrupt_turn() -> None:
+        nonlocal turn_task, turn_generation
+        turn_generation += 1
+        pipeline.interrupt_playback()
+        if turn_task and not turn_task.done():
+            turn_task.cancel()
+        turn_task = None
+
+    def begin_pipeline_turn(wav_path: str, history: list | None = None) -> None:
+        nonlocal turn_task, turn_generation
+        interrupt_turn()
+        pipeline.pause_hands_free(9999.0)
+        turn_generation += 1
+        turn_task = asyncio.create_task(run_pipeline_turn(wav_path, history or [], turn_generation))
+
+    async def send_hands_free_state(state: str) -> None:
+        if state == "listening":
+            await send_json({"type": "status", "state": "listening"})
+        elif state == "recording":
+            await send_json({"type": "status", "state": "recording"})
+        elif state == "processing":
+            await send_json({"type": "status", "state": "processing"})
+
+    def start_hands_free_if_needed() -> bool:
+        nonlocal hands_free_enabled
+        if hands_free_enabled:
+            return False
+        loop = asyncio.get_running_loop()
+
+        def on_submit(wav_path: str):
+            loop.call_soon_threadsafe(begin_pipeline_turn, wav_path, [])
+
+        def on_speech_start():
+            loop.call_soon_threadsafe(interrupt_turn)
+
+        def on_state(state: str):
+            asyncio.run_coroutine_threadsafe(send_hands_free_state(state), loop)
+
+        pipeline.start_hands_free(on_submit, on_speech_start, on_state)
+        hands_free_enabled = True
+        return True
+
+    def stop_hands_free_if_needed() -> None:
+        nonlocal hands_free_enabled
+        if not hands_free_enabled:
+            return
+        pipeline.stop_hands_free()
+        hands_free_enabled = False
+
+    async def run_pipeline_turn(wav_path: str, history: list, generation: int) -> None:
+        nonlocal turn_task
+        try:
+            async def send_pipeline_event(event: dict):
+                if generation != turn_generation:
+                    return
+                event_type = event.get("type")
+                if event_type == "user":
+                    await send_json({"type": "user_transcript", "text": event.get("text", "")})
+                elif event_type == "assistant_delta":
+                    await send_json({"type": "assistant_delta", "delta": event.get("delta", "")})
+                elif event_type == "assistant_done":
+                    await send_json({"type": "assistant_done", "assistant": event.get("assistant", "")})
+
+            await pipeline.run_turn_stream(wav_path, history, send_pipeline_event)
+        except asyncio.CancelledError:
+            logger.info("Pipeline turn interrupted.")
+        except Exception as e:
+            if generation == turn_generation:
+                logger.exception("Pipeline error")
+                await send_json({"type": "error", "message": str(e)})
+        finally:
+            try:
+                os.unlink(wav_path)
+            except OSError:
+                pass
+            if generation == turn_generation:
+                if hands_free_enabled:
+                    resume_delay = float(load_settings()["audio"].get("hands_free_resume_delay_seconds", 0.45))
+                    pipeline.pause_hands_free(resume_delay, replace=True)
+                await send_json({"type": "status", "state": "listening" if hands_free_enabled else "idle"})
+                turn_task = None
 
     try:
         while True:
@@ -170,52 +364,55 @@ async def websocket_endpoint(ws: WebSocket):
             if cmd == "start_record":
                 logger.info("Start recording")
                 try:
+                    stop_hands_free_if_needed()
+                    interrupt_turn()
                     pipeline.start_recording()
-                    await ws.send_json({"type": "status", "state": "recording"})
+                    await send_json({"type": "status", "state": "recording"})
                 except Exception as e:
                     logger.exception("Start recording failed")
-                    await ws.send_json({"type": "error", "message": str(e)})
-                    await ws.send_json({"type": "status", "state": "idle"})
+                    await send_json({"type": "error", "message": str(e)})
+                    await send_json({"type": "status", "state": "idle"})
 
             elif cmd == "stop_record":
                 logger.info("Stop recording")
-                wav_path = None
-
                 try:
                     wav_path = pipeline.stop_recording()
-                    await ws.send_json({"type": "status", "state": "processing"})
+                    await send_json({"type": "status", "state": "processing"})
                     history = msg.get("history", [])
-
-                    async def send_pipeline_event(event: dict):
-                        event_type = event.get("type")
-                        if event_type == "user":
-                            await ws.send_json({"type": "user_transcript", "text": event.get("text", "")})
-                        elif event_type == "assistant_delta":
-                            await ws.send_json({"type": "assistant_delta", "delta": event.get("delta", "")})
-                        elif event_type == "assistant_done":
-                            await ws.send_json({"type": "assistant_done", "assistant": event.get("assistant", "")})
-
-                    await pipeline.run_turn_stream(wav_path, history, send_pipeline_event)
+                    begin_pipeline_turn(wav_path, history)
                 except Exception as e:
-                    logger.exception("Pipeline error")
-                    await ws.send_json({"type": "error", "message": str(e)})
-                finally:
-                    if wav_path:
-                        try:
-                            os.unlink(wav_path)
-                        except OSError:
-                            pass
-
-                await ws.send_json({"type": "status", "state": "idle"})
+                    logger.exception("Stop recording failed")
+                    await send_json({"type": "error", "message": str(e)})
+                    await send_json({"type": "status", "state": "idle"})
 
             elif cmd == "cancel":
                 logger.info("Cancel recording")
+                interrupt_turn()
                 pipeline.cancel_recording()
-                await ws.send_json({"type": "status", "state": "idle"})
+                await send_json({"type": "status", "state": "idle"})
+
+            elif cmd == "set_hands_free":
+                enabled = bool(msg.get("enabled"))
+                logger.info("Set hands-free listening: %s", enabled)
+                try:
+                    if enabled:
+                        started = start_hands_free_if_needed()
+                        if started or turn_task is None:
+                            await send_json({"type": "status", "state": "listening"})
+                    else:
+                        stop_hands_free_if_needed()
+                        await send_json({"type": "status", "state": "idle"})
+                except Exception as e:
+                    logger.exception("Hands-free mode failed")
+                    stop_hands_free_if_needed()
+                    await send_json({"type": "error", "message": str(e)})
+                    await send_json({"type": "status", "state": "idle"})
 
     except WebSocketDisconnect:
         logger.info("WebSocket disconnected")
     finally:
+        stop_hands_free_if_needed()
+        interrupt_turn()
         active_ws = None
         _event_loop = None
 

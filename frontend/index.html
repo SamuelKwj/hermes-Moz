@@ -154,6 +154,10 @@ canvas#viz {
   border-color: #f39c12;
   box-shadow: 0 0 24px rgba(243,156,18,0.3);
 }
+.mic-btn.listening {
+  border-color: var(--ok);
+  box-shadow: 0 0 24px rgba(46,204,113,0.22);
+}
 @keyframes pulse-btn {
   0%, 100% { box-shadow: 0 0 16px rgba(231,76,60,0.3); }
   50% { box-shadow: 0 0 40px rgba(231,76,60,0.6); }
@@ -205,6 +209,7 @@ canvas#viz {
 }
 .status.recording { color: var(--danger); }
 .status.processing { color: #f39c12; }
+.status.listening { color: var(--ok); }
 .panel, .modal {
   position: absolute;
   inset: 0;
@@ -503,6 +508,7 @@ input[type="checkbox"] { width: 16px; height: 16px; }
       <label class="field">输入增益<input id="inputGain" type="range" min="0.5" max="3" step="0.1"></label>
       <label class="field">输出音量<input id="outputVolume" type="range" min="0.2" max="2" step="0.1"></label>
       <label class="field">VAD 阈值<input id="vadThreshold" type="range" min="0.002" max="0.04" step="0.001"></label>
+      <label class="field">免按键停顿提交<input id="handsFreeSilence" type="range" min="0.5" max="1.2" step="0.05"></label>
     </div>
 
     <div class="settings-group">
@@ -548,6 +554,7 @@ input[type="checkbox"] { width: 16px; height: 16px; }
 
     <div class="settings-group">
       <h2>窗口</h2>
+      <label class="field row">免按键监听<input id="handsFree" type="checkbox"></label>
       <label class="field row">窗口置顶<input id="alwaysOnTop" type="checkbox"></label>
       <label class="field row">启动后隐藏<input id="startMinimized" type="checkbox"></label>
     </div>
@@ -591,8 +598,16 @@ var sttComputeOptions = ["int8", "int8_float16", "float16", "auto"];
 var ttsModeOptions = ["edge_mp3", "windows_native"];
 var assistantDraftDiv = null;
 var assistantDraftText = "";
+var handsFreeMode = false;
+var lastHandsFreeSent = null;
 
-ws.onopen = () => console.log("WS connected");
+ws.onopen = () => {
+  console.log("WS connected");
+  lastHandsFreeSent = null;
+  if (settingsData && settingsData.ui) {
+    syncHandsFreeMode(!!settingsData.ui.hands_free);
+  }
+};
 ws.onclose = () => {
   console.log("WS closed");
   setStatus("连接已断开");
@@ -624,6 +639,11 @@ ws.onmessage = (e) => {
       break;
     case "error":
       setStatus("错误: " + msg.message);
+      if (String(msg.message || "").indexOf("免按键") >= 0) {
+        lastHandsFreeSent = null;
+        handsFreeMode = false;
+        if ($("handsFree")) $("handsFree").checked = false;
+      }
       setState("idle");
       break;
   }
@@ -741,6 +761,7 @@ function renderSettings() {
   $("inputGain").value = audio.input_gain || 1;
   $("outputVolume").value = audio.output_volume || 1;
   $("vadThreshold").value = audio.vad_threshold || 0.012;
+  $("handsFreeSilence").value = audio.hands_free_silence_seconds || 0.75;
   $("sttModel").value = stt.model || "base";
   $("sttDevice").value = stt.device || "cpu";
   $("sttComputeType").value = stt.compute_type || "int8";
@@ -753,6 +774,8 @@ function renderSettings() {
   $("hermesModel").value = hermes.model || "hermes";
   $("hermesMaxTokens").value = hermes.max_tokens || 300;
   $("hermesTemperature").value = hermes.temperature || 0.7;
+  $("handsFree").checked = !!ui.hands_free;
+  handsFreeMode = !!ui.hands_free;
   $("alwaysOnTop").checked = !!ui.always_on_top;
   $("startMinimized").checked = !!ui.start_minimized;
 }
@@ -928,7 +951,8 @@ function readSettingsForm(applyProfile) {
       output_device: deviceValue("outputDevice"),
       input_gain: Number($("inputGain").value),
       output_volume: Number($("outputVolume").value),
-      vad_threshold: Number($("vadThreshold").value)
+      vad_threshold: Number($("vadThreshold").value),
+      hands_free_silence_seconds: Number($("handsFreeSilence").value)
     },
     stt: {
       model: $("sttModel").value,
@@ -947,10 +971,20 @@ function readSettingsForm(applyProfile) {
       temperature: numberValue("hermesTemperature", 0.7)
     },
     ui: {
+      hands_free: $("handsFree").checked,
       always_on_top: $("alwaysOnTop").checked,
       start_minimized: $("startMinimized").checked
     }
   };
+}
+
+function syncHandsFreeMode(enabled) {
+  handsFreeMode = !!enabled;
+  if (lastHandsFreeSent === handsFreeMode) return;
+  if (ws.readyState === WebSocket.OPEN) {
+    ws.send(JSON.stringify({ cmd: "set_hands_free", enabled: handsFreeMode }));
+    lastHandsFreeSent = handsFreeMode;
+  }
 }
 
 function refreshStatus() {
@@ -965,6 +999,7 @@ function refreshStatus() {
     renderChecks("diagList");
     renderChecks("setupChecks");
     renderSettings();
+    syncHandsFreeMode(!!(settingsData && settingsData.ui && settingsData.ui.hands_free));
     if (settingsData && settingsData.setup && !settingsData.setup.first_run_complete) {
       $("setupModal").classList.remove("hidden");
     }
@@ -983,9 +1018,12 @@ function closeSettings() {
 }
 
 function saveSettings(closePanel, applyProfile) {
+  closePanel = closePanel === false ? false : true;
+  applyProfile = applyProfile === true;
   apiPost("/api/settings", readSettingsForm(applyProfile)).then(function(saved) {
     settingsData = saved;
     setStatus("设置已保存");
+    syncHandsFreeMode(!!(settingsData.ui && settingsData.ui.hands_free));
     if (closePanel !== false) closeSettings();
     refreshStatus();
   }).catch(function(error) {
@@ -1007,9 +1045,9 @@ function setState(s) {
   const btn = document.getElementById("micBtn");
   const dot = document.getElementById("statusDot");
   const status = document.getElementById("status");
-  btn.classList.remove("recording", "processing");
+  btn.classList.remove("recording", "processing", "listening");
   dot.classList.remove("off");
-  status.classList.remove("recording", "processing");
+  status.classList.remove("recording", "processing", "listening");
 
   if (s === "recording") {
     btn.classList.add("recording");
@@ -1019,9 +1057,13 @@ function setState(s) {
     btn.classList.add("processing");
     status.textContent = "处理中...";
     status.classList.add("processing");
+  } else if (s === "listening") {
+    btn.classList.add("listening");
+    status.textContent = "免按键监听中...";
+    status.classList.add("listening");
   } else {
     dot.classList.add("off");
-    status.textContent = "按住说话，松开发送";
+    status.textContent = handsFreeMode ? "免按键监听已关闭" : "按住说话，松开发送";
   }
 }
 
@@ -1068,12 +1110,21 @@ function finishAssistantMessage(text) {
 
 const micBtn = document.getElementById("micBtn");
 let isPressing = false;
+
+function canStartRecording() {
+  return !handsFreeMode && (state === "idle" || state === "processing");
+}
+
+function requestStartRecording() {
+  if (!canStartRecording()) return;
+  isPressing = true;
+  setState("recording");
+  ws.send(JSON.stringify({ cmd: "start_record" }));
+}
+
 // 鼠标按下开始录音
 micBtn.addEventListener("mousedown", () => {
-  if (state === "idle") {
-    isPressing = true;
-    ws.send(JSON.stringify({ cmd: "start_record" }));
-  }
+  requestStartRecording();
 });
 // 鼠标松开停止录音，发送请求
 micBtn.addEventListener("mouseup", () => {
@@ -1090,10 +1141,9 @@ micBtn.addEventListener("mouseleave", () => {
 });
 // 空格键快捷支持
 document.addEventListener("keydown", (e) => {
-  if (e.code === "Space" && !e.repeat && state === "idle") {
+  if (e.code === "Space" && !e.repeat && canStartRecording()) {
     e.preventDefault();
-    isPressing = true;
-    ws.send(JSON.stringify({ cmd: "start_record" }));
+    requestStartRecording();
   }
 });
 document.addEventListener("keyup", (e) => {
@@ -1125,7 +1175,7 @@ $("advancedToggle").addEventListener("click", function() {
 });
 $("closeSettingsBtn").addEventListener("click", closeSettings);
 $("refreshStatusBtn").addEventListener("click", refreshStatus);
-$("saveSettingsBtn").addEventListener("click", saveSettings);
+$("saveSettingsBtn").addEventListener("click", function() { saveSettings(true, false); });
 $("setupRefreshBtn").addEventListener("click", refreshStatus);
 $("completeSetupBtn").addEventListener("click", completeSetup);
 $("skipSetupBtn").addEventListener("click", completeSetup);
