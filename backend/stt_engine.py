@@ -71,6 +71,9 @@ def _add_cuda_dll_directories() -> list[str]:
         except OSError:
             logger.exception("Failed to add CUDA DLL directory: %s", path)
             continue
+        path_parts = os.environ.get("PATH", "").split(os.pathsep)
+        if key not in {part.lower() for part in path_parts if part}:
+            os.environ["PATH"] = str(path) + os.pathsep + os.environ.get("PATH", "")
         _DLL_DIRECTORY_HANDLES.append(handle)
         _CUDA_DLL_DIRS.append(path)
         seen.add(key)
@@ -218,32 +221,41 @@ def _get_model():
     return _MODEL
 
 
+def _transcribe_text(model, wav_path: str, config: dict) -> str:
+    segments, _info = model.transcribe(
+        wav_path,
+        beam_size=config["beam_size"],
+        language=config["language"],
+    )
+    return " ".join(seg.text.strip() for seg in segments)
+
+
 async def transcribe(wav_path: str) -> str:
     config = _stt_settings()
     model = await asyncio.to_thread(_get_model)
     active_config = _ACTIVE_CONFIG or config
     try:
-        segments, _info = await asyncio.to_thread(
-            model.transcribe,
+        text = await asyncio.to_thread(
+            _transcribe_text,
+            model,
             wav_path,
-            beam_size=active_config["beam_size"],
-            language=active_config["language"],
+            active_config,
         )
     except RuntimeError as exc:
         message = str(exc)
-        if active_config.get("device") != "cuda" or "cublas" not in message.lower():
+        load_error = any(token in message.lower() for token in ("cublas", "cudnn", ".dll"))
+        if active_config.get("device") != "cuda" or not load_error:
             raise
         logger.exception("GPU STT failed during transcription. Retrying with lightweight STT.")
-        _force_lightweight_fallback("GPU 运行库不可用，已自动回退轻量模式。")
+        _force_lightweight_fallback(_gpu_fallback_reason(message))
         model = await asyncio.to_thread(_get_model)
         active_config = _ACTIVE_CONFIG or _stt_settings()
-        segments, _info = await asyncio.to_thread(
-            model.transcribe,
+        text = await asyncio.to_thread(
+            _transcribe_text,
+            model,
             wav_path,
-            beam_size=active_config["beam_size"],
-            language=active_config["language"],
+            active_config,
         )
-    text = " ".join(seg.text.strip() for seg in segments)
     if not text:
         raise RuntimeError("No speech detected")
     return text
