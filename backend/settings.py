@@ -69,7 +69,9 @@ DEFAULT_SETTINGS: dict[str, Any] = {
         "beam_size": 5,
     },
     "tts": {
+        "mode": "edge_mp3",
         "voice": "zh-CN-XiaoxiaoNeural",
+        "native_voice": "Microsoft Huihui Desktop",
         "rate": "+0%",
         "volume": "+0%",
     },

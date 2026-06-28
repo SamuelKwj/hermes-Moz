@@ -25,8 +25,9 @@ TRIM_FRAME_SECONDS = 0.02
 TRIM_PADDING_SECONDS = 0.12
 HARD_SENTENCE_RE = re.compile(r"^(.+?[。！？!?；;\n])", re.S)
 SOFT_BREAKS = "，,、 "
-MIN_TTS_CHARS = 18
-MAX_TTS_CHARS = 72
+FIRST_TTS_MIN_CHARS = 20
+NEXT_TTS_MIN_CHARS = 36
+MAX_TTS_CHARS = 80
 
 
 def _coerce_device_index(value) -> int | None:
@@ -223,16 +224,17 @@ def _trim_silence(audio: np.ndarray, sample_rate: int, threshold: float) -> np.n
     return trimmed
 
 
-def _pop_sentence_chunks(buffer: str, force: bool = False) -> tuple[list[str], str]:
+def _pop_sentence_chunks(buffer: str, force: bool = False, first_chunk: bool = False) -> tuple[list[str], str]:
     chunks: list[str] = []
     text = buffer
     pending = ""
+    min_chars = FIRST_TTS_MIN_CHARS if first_chunk else NEXT_TTS_MIN_CHARS
     while text:
         match = HARD_SENTENCE_RE.match(text)
         if match:
             chunk = match.group(1).strip()
             pending = (pending + chunk).strip()
-            if len(pending) >= MIN_TTS_CHARS:
+            if len(pending) >= min_chars:
                 chunks.append(pending)
                 pending = ""
             text = text[len(match.group(1)):].lstrip()
@@ -244,10 +246,10 @@ def _pop_sentence_chunks(buffer: str, force: bool = False) -> tuple[list[str], s
             search_limit = min(len(candidate), MAX_TTS_CHARS)
             for mark in "。！？!?；;\n":
                 split_at = max(split_at, candidate.rfind(mark, 0, search_limit))
-            if split_at < MIN_TTS_CHARS:
+            if split_at < min_chars:
                 for mark in SOFT_BREAKS:
-                    split_at = max(split_at, candidate.rfind(mark, MIN_TTS_CHARS, search_limit))
-            if split_at >= MIN_TTS_CHARS:
+                    split_at = max(split_at, candidate.rfind(mark, min_chars, search_limit))
+            if split_at >= min_chars:
                 chunks.append(candidate[:split_at + 1].strip())
                 text = candidate[split_at + 1:].lstrip()
                 pending = ""
@@ -257,7 +259,10 @@ def _pop_sentence_chunks(buffer: str, force: bool = False) -> tuple[list[str], s
 
     remainder = (pending + text).strip()
     if force and remainder:
-        chunks.append(remainder)
+        if chunks and len(remainder) < NEXT_TTS_MIN_CHARS // 2:
+            chunks[-1] = (chunks[-1] + remainder).strip()
+        else:
+            chunks.append(remainder)
         text = ""
         pending = ""
     return chunks, (pending + text).strip()
@@ -424,6 +429,7 @@ class VoicePipeline:
         player_task = asyncio.create_task(self._tts_audio_player(audio_queue))
         reply_parts: list[str] = []
         sentence_buffer = ""
+        tts_chunks_sent = 0
 
         try:
             async for delta in self.hermes.chat_stream(text, history):
@@ -431,13 +437,18 @@ class VoicePipeline:
                 sentence_buffer += delta
                 await on_event({"type": "assistant_delta", "delta": delta})
 
-                chunks, sentence_buffer = _pop_sentence_chunks(sentence_buffer)
+                chunks, sentence_buffer = _pop_sentence_chunks(
+                    sentence_buffer,
+                    first_chunk=tts_chunks_sent == 0,
+                )
                 for chunk in chunks:
                     await tts_queue.put(chunk)
+                    tts_chunks_sent += 1
 
             chunks, sentence_buffer = _pop_sentence_chunks(sentence_buffer, force=True)
             for chunk in chunks:
                 await tts_queue.put(chunk)
+                tts_chunks_sent += 1
 
             reply = "".join(reply_parts).strip() or "我刚才没组织好回复。"
             logger.info("LLM: %s", reply)
