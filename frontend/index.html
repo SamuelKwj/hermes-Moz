@@ -555,6 +555,9 @@ input[type="checkbox"] { width: 16px; height: 16px; }
     <div class="settings-group">
       <h2>窗口</h2>
       <label class="field row">免按键监听<input id="handsFree" type="checkbox"></label>
+      <label class="field row">唤醒词门控<input id="wakeWordEnabled" type="checkbox"></label>
+      <label class="field">唤醒词<input id="wakeWords" type="text"></label>
+      <label class="field">唤醒回应<input id="wakeReply" type="text"></label>
       <label class="field row">窗口置顶<input id="alwaysOnTop" type="checkbox"></label>
       <label class="field row">启动后隐藏<input id="startMinimized" type="checkbox"></label>
     </div>
@@ -636,6 +639,12 @@ ws.onmessage = (e) => {
       break;
     case "assistant_done":
       finishAssistantMessage(msg.assistant || assistantDraftText);
+      break;
+    case "wake_ignored":
+      setStatus("等待唤醒词...");
+      break;
+    case "wake_prompt":
+      setStatus(msg.text || "我在，请说。");
       break;
     case "error":
       setStatus("错误: " + msg.message);
@@ -776,6 +785,9 @@ function renderSettings() {
   $("hermesTemperature").value = hermes.temperature || 0.7;
   $("handsFree").checked = !!ui.hands_free;
   handsFreeMode = !!ui.hands_free;
+  $("wakeWordEnabled").checked = !!ui.wake_word_enabled;
+  $("wakeWords").value = ui.wake_words || "小赫,赫尔墨斯,Hermes";
+  $("wakeReply").value = ui.wake_reply || "我在，大王请说。";
   $("alwaysOnTop").checked = !!ui.always_on_top;
   $("startMinimized").checked = !!ui.start_minimized;
 }
@@ -972,6 +984,9 @@ function readSettingsForm(applyProfile) {
     },
     ui: {
       hands_free: $("handsFree").checked,
+      wake_word_enabled: $("wakeWordEnabled").checked,
+      wake_words: $("wakeWords").value.trim() || "小赫,赫尔墨斯,Hermes",
+      wake_reply: $("wakeReply").value.trim() || "我在，大王请说。",
       always_on_top: $("alwaysOnTop").checked,
       start_minimized: $("startMinimized").checked
     }
@@ -1059,7 +1074,8 @@ function setState(s) {
     status.classList.add("processing");
   } else if (s === "listening") {
     btn.classList.add("listening");
-    status.textContent = "免按键监听中...";
+    var wakeOn = settingsData && settingsData.ui && settingsData.ui.wake_word_enabled;
+    status.textContent = wakeOn ? "等待唤醒词..." : "免按键监听中...";
     status.classList.add("listening");
   } else {
     dot.classList.add("off");

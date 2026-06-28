@@ -34,6 +34,88 @@ NEXT_TTS_MIN_CHARS = 36
 MAX_TTS_CHARS = 80
 
 
+def _normalize_wake_text(text: str) -> str:
+    return re.sub(r"[\s,，。.!！?？、:：;；\"'“”‘’（）()\-_/\\]+", "", text).lower()
+
+
+def _wake_words_from_settings(settings: dict) -> list[str]:
+    raw = str(settings.get("ui", {}).get("wake_words", "小赫,赫尔墨斯,Hermes"))
+    words = [word.strip() for word in re.split(r"[,，\n;；]+", raw) if word.strip()]
+    return words or ["小赫", "赫尔墨斯", "Hermes"]
+
+
+def _apply_wake_gate(text: str, settings: dict) -> tuple[bool, str, bool]:
+    normalized = _normalize_wake_text(text)
+    aliases = {
+        "小赫": [
+            "小赫", "小河", "小和", "小何", "小鹤", "小核", "小盒", "小贺", "小賀",
+            "小黑", "小嘿", "小嗨", "小海", "小孩", "小禾", "晓赫", "小裤", "小褲",
+            "和", "河", "何", "赫", "鹤",
+        ],
+        "赫尔墨斯": ["赫尔墨斯", "荷尔墨斯", "赫尔莫斯"],
+        "hermes": ["hermes"],
+    }
+    candidates: list[tuple[str, bool]] = []
+    for word in _wake_words_from_settings(settings):
+        candidates.append((word, False))
+        candidates.extend((alias, len(_normalize_wake_text(alias)) <= 1) for alias in aliases.get(_normalize_wake_text(word), []))
+
+    matched = False
+    matched_word = ""
+    for word, leading_only in candidates:
+        wake = _normalize_wake_text(word)
+        if not wake:
+            continue
+        if leading_only and not normalized.startswith(wake):
+            continue
+        if leading_only or wake in normalized:
+            matched = True
+            matched_word = word
+            break
+
+    if not matched:
+        return False, text, False
+
+    stripped = text
+    for word, leading_only in candidates:
+        wake = _normalize_wake_text(word)
+        if not wake:
+            continue
+        while True:
+            stripped_next = re.sub(re.escape(word), "", stripped, count=1, flags=re.IGNORECASE).strip()
+            if stripped_next == stripped and leading_only and _normalize_wake_text(stripped).startswith(wake):
+                stripped_next = stripped[1:].strip()
+            if stripped_next == stripped:
+                break
+            stripped = stripped_next
+            if not _normalize_wake_text(stripped).startswith(wake):
+                break
+
+    if _normalize_wake_text(stripped) == _normalize_wake_text(matched_word):
+        stripped = ""
+    command = stripped.strip(" ，,。.!！?？、")
+    return True, command, not bool(command)
+
+
+def _is_stt_hallucination(text: str) -> bool:
+    normalized = _normalize_wake_text(text)
+    if not normalized:
+        return True
+    hallucinations = (
+        "字幕",
+        "amaraorg",
+        "志愿者",
+        "志願者",
+        "社群提供",
+        "谢谢观看",
+        "謝謝觀看",
+        "感谢观看",
+        "感謝觀看",
+        "请不吝点赞订阅转发打赏支持明镜与点点栏目",
+    )
+    return any(item in normalized for item in hallucinations)
+
+
 def _coerce_device_index(value) -> int | None:
     if value is None or value == "":
         return None
@@ -600,8 +682,10 @@ class VoicePipeline:
             self._hands_free_reset()
             return
 
+        ui_settings = settings.get("ui", {})
         threshold = float(audio_settings.get("vad_threshold", 0.012))
-        silence_seconds = float(audio_settings.get("hands_free_silence_seconds", 0.55))
+        silence_key = "hands_free_wake_silence_seconds" if ui_settings.get("wake_word_enabled") else "hands_free_silence_seconds"
+        silence_seconds = float(audio_settings.get(silence_key, 0.45 if silence_key == "hands_free_wake_silence_seconds" else 0.75))
         trigger_seconds = float(audio_settings.get("hands_free_trigger_seconds", 0.18))
         max_seconds = float(audio_settings.get("hands_free_max_seconds", 12.0))
         frame_seconds = frames / self._hands_free_sample_rate
@@ -653,7 +737,9 @@ class VoicePipeline:
                 audio = np.clip(audio * gain, -1.0, 1.0)
             threshold = float(audio_settings.get("vad_threshold", 0.012))
             audio = _trim_silence(audio, self._hands_free_sample_rate, threshold * 0.55)
-            min_seconds = float(audio_settings.get("hands_free_min_record_seconds", 1.0))
+            ui_settings = load_settings().get("ui", {})
+            min_key = "hands_free_wake_min_record_seconds" if ui_settings.get("wake_word_enabled") else "hands_free_min_record_seconds"
+            min_seconds = float(audio_settings.get(min_key, 0.35 if min_key == "hands_free_wake_min_record_seconds" else 1.0))
             if len(audio) / self._hands_free_sample_rate < min_seconds:
                 if self._hands_free_on_state:
                     self._hands_free_on_state("listening")
@@ -718,7 +804,7 @@ class VoicePipeline:
 
         return {"user": text, "assistant": reply}
 
-    async def run_turn_stream(self, wav_path: str, history: list = None, on_event=None) -> dict:
+    async def run_turn_stream(self, wav_path: str, history: list = None, on_event=None, require_wake: bool = False) -> dict:
         """Full turn with streaming LLM text and sentence-by-sentence TTS playback."""
         history = history or []
         if on_event is None:
@@ -727,6 +813,22 @@ class VoicePipeline:
 
         text = await transcribe(wav_path)
         logger.info("STT: %s", text)
+        if require_wake:
+            if _is_stt_hallucination(text):
+                logger.info("Ignoring likely STT hallucination in hands-free mode: %s", text)
+                await on_event({"type": "wake_ignored", "text": text})
+                return {"user": text, "assistant": "", "ignored": True}
+            matched, gated_text, wake_only = _apply_wake_gate(text, load_settings())
+            if not matched:
+                logger.info("Wake word not detected; ignoring hands-free transcript: %s", text)
+                await on_event({"type": "wake_ignored", "text": text})
+                return {"user": text, "assistant": "", "ignored": True}
+            if wake_only:
+                logger.info("Wake word detected; waiting for command.")
+                await on_event({"type": "wake_prompt", "text": text})
+                return {"user": text, "assistant": "", "wake_prompt": True}
+            text = gated_text
+            logger.info("Wake word accepted; command: %s", text)
         await on_event({"type": "user", "text": text})
 
         output_device, output_sample_rate, output_volume = self._playback_settings()
