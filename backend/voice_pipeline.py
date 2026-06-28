@@ -25,6 +25,8 @@ TRIM_FRAME_SECONDS = 0.02
 TRIM_PADDING_SECONDS = 0.12
 HARD_SENTENCE_RE = re.compile(r"^(.+?[。！？!?；;\n])", re.S)
 SOFT_BREAKS = "，,、 "
+MIN_TTS_CHARS = 18
+MAX_TTS_CHARS = 72
 
 
 def _coerce_device_index(value) -> int | None:
@@ -224,32 +226,41 @@ def _trim_silence(audio: np.ndarray, sample_rate: int, threshold: float) -> np.n
 def _pop_sentence_chunks(buffer: str, force: bool = False) -> tuple[list[str], str]:
     chunks: list[str] = []
     text = buffer
+    pending = ""
     while text:
         match = HARD_SENTENCE_RE.match(text)
         if match:
             chunk = match.group(1).strip()
-            if chunk:
-                chunks.append(chunk)
+            pending = (pending + chunk).strip()
+            if len(pending) >= MIN_TTS_CHARS:
+                chunks.append(pending)
+                pending = ""
             text = text[len(match.group(1)):].lstrip()
             continue
 
-        if len(text) >= 36:
+        candidate = (pending + text).strip()
+        if len(candidate) >= MAX_TTS_CHARS:
             split_at = -1
-            for mark in SOFT_BREAKS:
-                split_at = max(split_at, text.rfind(mark, 0, 36))
-            if split_at >= 10:
-                chunk = text[:split_at + 1].strip()
-                if chunk:
-                    chunks.append(chunk)
-                text = text[split_at + 1:].lstrip()
+            search_limit = min(len(candidate), MAX_TTS_CHARS)
+            for mark in "。！？!?；;\n":
+                split_at = max(split_at, candidate.rfind(mark, 0, search_limit))
+            if split_at < MIN_TTS_CHARS:
+                for mark in SOFT_BREAKS:
+                    split_at = max(split_at, candidate.rfind(mark, MIN_TTS_CHARS, search_limit))
+            if split_at >= MIN_TTS_CHARS:
+                chunks.append(candidate[:split_at + 1].strip())
+                text = candidate[split_at + 1:].lstrip()
+                pending = ""
                 continue
 
         break
 
-    if force and text.strip():
-        chunks.append(text.strip())
+    remainder = (pending + text).strip()
+    if force and remainder:
+        chunks.append(remainder)
         text = ""
-    return chunks, text
+        pending = ""
+    return chunks, (pending + text).strip()
 
 
 class VoicePipeline:
@@ -408,7 +419,9 @@ class VoicePipeline:
         await on_event({"type": "user", "text": text})
 
         tts_queue: asyncio.Queue[str | None] = asyncio.Queue()
-        player_task = asyncio.create_task(self._tts_play_worker(tts_queue))
+        audio_queue: asyncio.Queue[str | None] = asyncio.Queue()
+        synth_task = asyncio.create_task(self._tts_synth_worker(tts_queue, audio_queue))
+        player_task = asyncio.create_task(self._tts_audio_player(audio_queue))
         reply_parts: list[str] = []
         sentence_buffer = ""
 
@@ -430,28 +443,40 @@ class VoicePipeline:
             logger.info("LLM: %s", reply)
             await on_event({"type": "assistant_done", "assistant": reply})
             await tts_queue.put(None)
+            await synth_task
             await player_task
             return {"user": text, "assistant": reply}
         except Exception:
+            synth_task.cancel()
             player_task.cancel()
             raise
 
-    async def _tts_play_worker(self, queue: asyncio.Queue) -> None:
-        while True:
-            text = await queue.get()
-            if text is None:
-                return
-            mp3_path = None
-            try:
+    async def _tts_synth_worker(self, text_queue: asyncio.Queue, audio_queue: asyncio.Queue) -> None:
+        try:
+            while True:
+                text = await text_queue.get()
+                if text is None:
+                    await audio_queue.put(None)
+                    return
                 mp3_path = await synthesize(text)
                 logger.info("TTS chunk saved: %s", mp3_path)
+                await audio_queue.put(mp3_path)
+        except Exception:
+            await audio_queue.put(None)
+            raise
+
+    async def _tts_audio_player(self, queue: asyncio.Queue) -> None:
+        while True:
+            mp3_path = await queue.get()
+            if mp3_path is None:
+                return
+            try:
                 await self._play_audio(mp3_path)
             finally:
-                if mp3_path:
-                    try:
-                        os.unlink(mp3_path)
-                    except OSError:
-                        pass
+                try:
+                    os.unlink(mp3_path)
+                except OSError:
+                    pass
 
     async def _play_audio(self, path: str) -> None:
         """Play MP3 via ffmpeg decode + sounddevice."""
