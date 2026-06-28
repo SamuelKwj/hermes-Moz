@@ -109,6 +109,7 @@ async def status():
         "hermes": await hermes_status(settings),
         "performance_profiles": PERFORMANCE_PROFILES,
         "stt": _stt_status(),
+        "stt_models": _stt_models(),
         "settings": settings,
     }
 
@@ -226,6 +227,16 @@ def _stt_status() -> dict:
         return stt_status()
     except Exception as exc:
         return {"error": str(exc)}
+
+
+def _stt_models() -> list[dict]:
+    try:
+        from stt_engine import model_inventory
+
+        return model_inventory()
+    except Exception:
+        logger.exception("Failed to collect STT model inventory.")
+        return []
 
 
 if __name__ == "__main__":

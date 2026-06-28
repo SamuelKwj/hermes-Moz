@@ -17,6 +17,34 @@ _CUDA_DLL_DIRS = []
 # 国内HuggingFace镜像加速
 os.environ.setdefault("HF_ENDPOINT", "https://hf-mirror.com")
 
+KNOWN_STT_MODELS = {
+    "tiny": {
+        "label": "tiny",
+        "repo": "Systran/faster-whisper-tiny",
+        "local_dir": "faster-whisper-tiny",
+    },
+    "base": {
+        "label": "base",
+        "repo": "Systran/faster-whisper-base",
+        "local_dir": "faster-whisper-base",
+    },
+    "small": {
+        "label": "small",
+        "repo": "Systran/faster-whisper-small",
+        "local_dir": "faster-whisper-small",
+    },
+    "medium": {
+        "label": "medium",
+        "repo": "Systran/faster-whisper-medium",
+        "local_dir": "faster-whisper-medium",
+    },
+    "large-v3": {
+        "label": "large-v3",
+        "repo": "Systran/faster-whisper-large-v3",
+        "local_dir": "faster-whisper-large-v3",
+    },
+}
+
 
 def _candidate_cuda_dll_dirs() -> list[Path]:
     candidates: list[Path] = []
@@ -82,26 +110,86 @@ def _add_cuda_dll_directories() -> list[str]:
     return added
 
 
-def _local_stt_model_path(model_name: str) -> Path | None:
-    local_names = {
-        "small": "faster-whisper-small",
-        "faster-whisper-small": "faster-whisper-small",
-        "large-v3": "faster-whisper-large-v3",
-        "faster-whisper-large-v3": "faster-whisper-large-v3",
-    }
-    dirname = local_names.get(model_name)
-    if not dirname:
-        return None
+def _model_files_complete(path: Path) -> bool:
+    has_vocab = (path / "vocabulary.json").exists() or (path / "vocabulary.txt").exists()
+    return (
+        (path / "model.bin").exists()
+        and (path / "config.json").exists()
+        and (path / "tokenizer.json").exists()
+        and has_vocab
+    )
 
+
+def _model_cache_root() -> Path | None:
     try:
         from app_runtime import get_model_cache_dir
     except Exception:
         return None
+    return get_model_cache_dir()
 
-    path = get_model_cache_dir() / dirname
-    if (path / "model.bin").exists() and (path / "config.json").exists():
+
+def _manual_model_path(model_name: str) -> Path | None:
+    model = KNOWN_STT_MODELS.get(model_name)
+    if not model:
+        return None
+
+    cache_root = _model_cache_root()
+    if cache_root is None:
+        return None
+
+    path = cache_root / str(model["local_dir"])
+    if _model_files_complete(path):
         return path
     return None
+
+
+def _hub_cached_model_path(repo_id: str) -> Path | None:
+    cache_root = _model_cache_root()
+    if cache_root is None:
+        return None
+    hub_cache = Path(os.getenv("HUGGINGFACE_HUB_CACHE", cache_root / "huggingface" / "hub"))
+    repo_cache = hub_cache / ("models--" + repo_id.replace("/", "--"))
+    snapshots_dir = repo_cache / "snapshots"
+    if not snapshots_dir.exists():
+        return None
+    for snapshot in sorted(snapshots_dir.iterdir(), key=lambda item: item.stat().st_mtime, reverse=True):
+        if snapshot.is_dir() and (snapshot / "model.bin").exists() and (snapshot / "config.json").exists():
+            return snapshot
+    return None
+
+
+def _local_stt_model_path(model_name: str) -> Path | None:
+    manual_path = _manual_model_path(model_name)
+    if manual_path is not None:
+        return manual_path
+
+    model = KNOWN_STT_MODELS.get(model_name)
+    if not model:
+        return None
+    return _hub_cached_model_path(str(model["repo"]))
+
+
+def model_inventory() -> list[dict]:
+    active = _ACTIVE_CONFIG or {}
+    configured = _stt_settings()
+    current_model = active.get("model") or configured.get("model")
+    items = []
+    for name, model in KNOWN_STT_MODELS.items():
+        manual_path = _manual_model_path(name)
+        hub_path = _hub_cached_model_path(str(model["repo"]))
+        local_path = manual_path or hub_path
+        items.append(
+            {
+                "name": name,
+                "label": model["label"],
+                "repo": model["repo"],
+                "downloaded": local_path is not None,
+                "source": "local" if manual_path else ("hub_cache" if hub_path else None),
+                "path": str(local_path) if local_path else None,
+                "current": name == current_model,
+            }
+        )
+    return items
 
 
 def _stt_settings() -> dict:

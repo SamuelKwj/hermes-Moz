@@ -45,6 +45,8 @@ PERFORMANCE_PROFILES: dict[str, dict[str, Any]] = {
     },
 }
 
+VALID_PERFORMANCE_PROFILES = {*PERFORMANCE_PROFILES.keys(), "custom"}
+
 
 DEFAULT_SETTINGS: dict[str, Any] = {
     "performance": {
@@ -123,7 +125,7 @@ def _known_settings(data: dict[str, Any]) -> dict[str, Any]:
 def apply_performance_profile(settings: dict[str, Any], profile_name: str) -> dict[str, Any]:
     profile = PERFORMANCE_PROFILES.get(profile_name, PERFORMANCE_PROFILES["lightweight"])
     merged = _deep_merge(settings, {
-        "performance": {"profile": profile_name if profile_name in PERFORMANCE_PROFILES else "lightweight"},
+        "performance": {"profile": profile_name if profile_name in PERFORMANCE_PROFILES else "custom"},
         "stt": profile["stt"],
         "hermes": profile["hermes"],
     })
@@ -177,11 +179,16 @@ def patch_settings(patch: dict[str, Any]) -> dict[str, Any]:
     known_patch = _known_settings(patch)
     current = load_settings()
     merged = _deep_merge(current, known_patch)
+    raw_performance = patch.get("performance") if isinstance(patch, dict) else None
+    apply_profile = bool(raw_performance.get("apply_profile")) if isinstance(raw_performance, dict) else False
     profile_name = (
         known_patch.get("performance", {}).get("profile")
         if isinstance(known_patch.get("performance"), dict)
         else None
     )
-    if profile_name:
+    if profile_name not in VALID_PERFORMANCE_PROFILES:
+        profile_name = "custom"
+        merged["performance"]["profile"] = "custom"
+    if apply_profile and profile_name in PERFORMANCE_PROFILES:
         merged = apply_performance_profile(merged, str(profile_name))
     return save_settings(merged)
