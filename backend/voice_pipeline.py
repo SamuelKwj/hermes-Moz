@@ -820,7 +820,14 @@ class VoicePipeline:
             async def on_event(_event):
                 return None
 
-        text = await transcribe(wav_path)
+        try:
+            text = await transcribe(wav_path)
+        except RuntimeError as exc:
+            if "No speech detected" in str(exc):
+                logger.info("Ignoring hands-free audio with no speech detected.")
+                await on_event({"type": "wake_ignored", "text": ""})
+                return {"user": "", "assistant": "", "ignored": True}
+            raise
         logger.info("STT: %s", text)
         if require_wake:
             if _is_stt_hallucination(text):
