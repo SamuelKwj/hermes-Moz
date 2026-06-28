@@ -68,6 +68,8 @@ def _apply_wake_gate(text: str, settings: dict) -> tuple[bool, str, bool]:
             continue
         if leading_only and not normalized.startswith(wake):
             continue
+        if leading_only and len(normalized) > len(wake) * 2:
+            continue
         if leading_only or wake in normalized:
             matched = True
             matched_word = word
@@ -483,6 +485,8 @@ class VoicePipeline:
         self._hands_free_voice_seconds = 0.0
         self._hands_free_started_at = 0.0
         self._hands_free_paused_until = 0.0
+        self._hands_free_audio_settings = {}
+        self._hands_free_ui_settings = {}
         self._hands_free_on_submit = None
         self._hands_free_on_speech_start = None
         self._hands_free_on_state = None
@@ -602,6 +606,11 @@ class VoicePipeline:
             self._hands_free_paused_until = max(self._hands_free_paused_until, paused_until)
         self._hands_free_reset()
 
+    def update_hands_free_settings(self, settings: dict | None = None) -> None:
+        settings = settings or load_settings()
+        self._hands_free_audio_settings = dict(settings.get("audio", {}))
+        self._hands_free_ui_settings = dict(settings.get("ui", {}))
+
     def start_hands_free(self, on_submit, on_speech_start=None, on_state=None) -> None:
         if self._hands_free_stream is not None:
             return
@@ -610,6 +619,7 @@ class VoicePipeline:
 
         settings = load_settings()
         audio_settings = settings["audio"]
+        self.update_hands_free_settings(settings)
         self._hands_free_on_submit = on_submit
         self._hands_free_on_speech_start = on_speech_start
         self._hands_free_on_state = on_state
@@ -676,13 +686,12 @@ class VoicePipeline:
         if self._level_callback:
             self._level_callback(rms)
 
-        settings = load_settings()
-        audio_settings = settings["audio"]
+        audio_settings = self._hands_free_audio_settings
         if time.monotonic() < self._hands_free_paused_until:
             self._hands_free_reset()
             return
 
-        ui_settings = settings.get("ui", {})
+        ui_settings = self._hands_free_ui_settings
         threshold = float(audio_settings.get("vad_threshold", 0.012))
         silence_key = "hands_free_wake_silence_seconds" if ui_settings.get("wake_word_enabled") else "hands_free_silence_seconds"
         silence_seconds = float(audio_settings.get(silence_key, 0.45 if silence_key == "hands_free_wake_silence_seconds" else 0.75))
@@ -737,7 +746,7 @@ class VoicePipeline:
                 audio = np.clip(audio * gain, -1.0, 1.0)
             threshold = float(audio_settings.get("vad_threshold", 0.012))
             audio = _trim_silence(audio, self._hands_free_sample_rate, threshold * 0.55)
-            ui_settings = load_settings().get("ui", {})
+            ui_settings = self._hands_free_ui_settings
             min_key = "hands_free_wake_min_record_seconds" if ui_settings.get("wake_word_enabled") else "hands_free_min_record_seconds"
             min_seconds = float(audio_settings.get(min_key, 0.35 if min_key == "hands_free_wake_min_record_seconds" else 1.0))
             if len(audio) / self._hands_free_sample_rate < min_seconds:

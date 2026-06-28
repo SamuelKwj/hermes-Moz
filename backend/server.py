@@ -230,6 +230,7 @@ async def update_settings(payload: dict):
     global _stt_ready, _last_error
     before = load_settings()["stt"]
     saved = patch_settings(payload)
+    pipeline.update_hands_free_settings(saved)
     after = saved["stt"]
     if before != after:
         from stt_engine import reset_model
@@ -260,6 +261,7 @@ async def websocket_endpoint(ws: WebSocket):
     logger.info("WebSocket connected")
     send_lock = asyncio.Lock()
     turn_task: asyncio.Task | None = None
+    wake_prompt_task: asyncio.Task | None = None
     turn_generation = 0
     hands_free_enabled = False
     wake_armed_until = 0.0
@@ -270,7 +272,7 @@ async def websocket_endpoint(ws: WebSocket):
             await ws.send_json(payload)
 
     def level_cb(rms: float):
-        if active_ws and _event_loop and _event_loop.is_running():
+        if active_ws is ws and _event_loop and _event_loop.is_running():
             asyncio.run_coroutine_threadsafe(
                 send_json({"type": "level", "rms": rms}),
                 _event_loop,
@@ -279,9 +281,12 @@ async def websocket_endpoint(ws: WebSocket):
     pipeline.set_level_callback(level_cb)
 
     def interrupt_turn() -> None:
-        nonlocal turn_task, turn_generation
+        nonlocal turn_task, wake_prompt_task, turn_generation
         turn_generation += 1
         pipeline.interrupt_playback()
+        if wake_prompt_task and not wake_prompt_task.done():
+            wake_prompt_task.cancel()
+        wake_prompt_task = None
         if turn_task and not turn_task.done():
             turn_task.cancel()
         turn_task = None
@@ -345,7 +350,12 @@ async def websocket_endpoint(ws: WebSocket):
         try:
             pipeline.pause_hands_free(9999.0)
             path = await synthesize(reply)
+            if generation != turn_generation:
+                return
             await pipeline._play_audio(path)
+        except asyncio.CancelledError:
+            logger.info("Wake prompt interrupted.")
+            raise
         except Exception:
             logger.exception("Wake prompt TTS failed.")
         finally:
@@ -369,7 +379,7 @@ async def websocket_endpoint(ws: WebSocket):
         nonlocal turn_task, wake_armed_until
         try:
             async def send_pipeline_event(event: dict):
-                nonlocal wake_armed_until
+                nonlocal wake_armed_until, wake_prompt_task
                 if generation != turn_generation:
                     return
                 event_type = event.get("type")
@@ -388,7 +398,9 @@ async def websocket_endpoint(ws: WebSocket):
                     settings = load_settings()
                     hands_free_history.clear()
                     wake_armed_until = time.monotonic() + float(settings["ui"].get("wake_window_seconds", 8.0))
-                    asyncio.create_task(play_wake_prompt(generation))
+                    if wake_prompt_task and not wake_prompt_task.done():
+                        wake_prompt_task.cancel()
+                    wake_prompt_task = asyncio.create_task(play_wake_prompt(generation))
 
             result = await pipeline.run_turn_stream(wav_path, history, send_pipeline_event, require_wake=require_wake)
             if hands_free_turn and result and not result.get("ignored") and not result.get("wake_prompt"):
@@ -460,6 +472,7 @@ async def websocket_endpoint(ws: WebSocket):
                 logger.info("Set hands-free listening: %s", enabled)
                 try:
                     if enabled:
+                        pipeline.update_hands_free_settings(load_settings())
                         started = start_hands_free_if_needed()
                         if started or turn_task is None:
                             await send_json({"type": "status", "state": "listening"})
@@ -477,8 +490,9 @@ async def websocket_endpoint(ws: WebSocket):
     finally:
         stop_hands_free_if_needed()
         interrupt_turn()
-        active_ws = None
-        _event_loop = None
+        if active_ws is ws:
+            active_ws = None
+            _event_loop = None
 
 
 def main():
