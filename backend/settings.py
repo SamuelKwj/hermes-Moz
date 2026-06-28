@@ -29,10 +29,10 @@ PERFORMANCE_PROFILES: dict[str, dict[str, Any]] = {
         },
     },
     "extreme_gpu": {
-        "label": "GPU 极致性能",
-        "description": "面向高性能 NVIDIA GPU，优先准确率和响应上限。",
+        "label": "GPU 快速响应",
+        "description": "面向高性能 NVIDIA GPU，优先低延迟和日常对话准确率。",
         "stt": {
-            "model": "large-v3",
+            "model": "small",
             "device": "cuda",
             "compute_type": "float16",
             "beam_size": 5,

@@ -81,6 +81,8 @@ def _add_cuda_dll_directories() -> list[str]:
 
 def _local_stt_model_path(model_name: str) -> Path | None:
     local_names = {
+        "small": "faster-whisper-small",
+        "faster-whisper-small": "faster-whisper-small",
         "large-v3": "faster-whisper-large-v3",
         "faster-whisper-large-v3": "faster-whisper-large-v3",
     }

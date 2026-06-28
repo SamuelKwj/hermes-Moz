@@ -334,6 +334,17 @@ select, input[type="text"], input[type="number"] {
   padding: 6px 8px;
   font: inherit;
 }
+select {
+  color-scheme: dark;
+}
+select option {
+  background: #12131c;
+  color: #f4f1ff;
+}
+select option:checked {
+  background: #342a70;
+  color: #ffffff;
+}
 input[type="range"] { width: 100%; }
 input[type="checkbox"] { width: 16px; height: 16px; }
 .actions {
@@ -460,12 +471,12 @@ input[type="checkbox"] { width: 16px; height: 16px; }
       <input id="performanceProfile" type="hidden" value="lightweight">
       <div class="profile-grid">
         <button class="profile-card" id="profileLightweight" type="button" data-profile="lightweight">
-          <div class="profile-title"><span>轻量兼容</span><span class="profile-badge">运行中</span></div>
+          <div class="profile-title"><span>轻量兼容</span><span class="profile-badge">已选</span></div>
           <div class="profile-desc">适配绝大多数机器，使用 CPU 小模型，启动稳、资源占用低。</div>
         </button>
         <button class="profile-card" id="profileExtremeGpu" type="button" data-profile="extreme_gpu">
-          <div class="profile-title"><span>GPU 极致性能</span><span class="profile-badge">运行中</span></div>
-          <div class="profile-desc">使用 CUDA 和更大 STT 模型。需要 NVIDIA CUDA/cuBLAS 运行库完整可用。</div>
+          <div class="profile-title"><span>GPU 快速响应</span><span class="profile-badge">已选</span></div>
+          <div class="profile-desc">使用 small / cuda / float16。比 large-v3 更快，日常中文对话够用。</div>
         </button>
       </div>
       <div class="runtime-strip" id="runtimeProfileStatus">当前运行状态读取中...</div>
@@ -610,7 +621,7 @@ function collectChecks() {
   var profile = (settingsData && settingsData.performance && settingsData.performance.profile) || "lightweight";
   var sttOk = !!(statusData && statusData.stt_ready && !stt.fallback);
   return [
-    checkItem("性能档位", true, profile === "extreme_gpu" ? "GPU 极致性能" : "轻量兼容"),
+    checkItem("性能档位", true, profile === "extreme_gpu" ? "GPU 快速响应" : "轻量兼容"),
     checkItem("ffmpeg", deps.ffmpeg, deps.ffmpeg_path || "未检测到"),
     checkItem("麦克风", devicesData.inputs.length > 0, devicesData.inputs.length + " 个输入设备"),
     checkItem("扬声器", devicesData.outputs.length > 0, devicesData.outputs.length + " 个输出设备"),
@@ -694,7 +705,7 @@ function renderSettings() {
 }
 
 function profileLabel(profileName) {
-  return profileName === "extreme_gpu" ? "GPU 极致性能" : "轻量兼容";
+  return profileName === "extreme_gpu" ? "GPU 快速响应" : "轻量兼容";
 }
 
 function renderPerformanceCards() {
@@ -743,7 +754,8 @@ function applyProfileToForm() {
 function selectPerformanceProfile(profileName) {
   $("performanceProfile").value = profileName;
   applyProfileToForm();
-  setStatus("已选择: " + profileLabel(profileName) + "，点保存后生效");
+  setStatus("正在切换到: " + profileLabel(profileName));
+  saveSettings(false);
 }
 
 function deviceValue(id) {
@@ -818,11 +830,11 @@ function closeSettings() {
   $("settingsPanel").classList.add("hidden");
 }
 
-function saveSettings() {
+function saveSettings(closePanel) {
   apiPost("/api/settings", readSettingsForm()).then(function(saved) {
     settingsData = saved;
     setStatus("设置已保存");
-    closeSettings();
+    if (closePanel !== false) closeSettings();
     refreshStatus();
   }).catch(function(error) {
     setStatus("保存失败: " + error.message);
