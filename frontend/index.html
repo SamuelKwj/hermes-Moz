@@ -215,7 +215,7 @@ canvas#viz {
 }
 .panel.hidden, .modal.hidden { display: none; }
 .panel {
-  padding: 18px;
+  padding: 18px 18px 88px;
   overflow-y: auto;
 }
 .panel-head, .modal-head {
@@ -257,6 +257,73 @@ canvas#viz {
   line-height: 1.35;
   color: var(--text-dim);
 }
+.profile-grid {
+  display: grid;
+  grid-template-columns: 1fr;
+  gap: 8px;
+}
+.profile-card {
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: rgba(255,255,255,0.04);
+  color: var(--text);
+  cursor: pointer;
+  padding: 10px;
+  text-align: left;
+  font: inherit;
+}
+.profile-card.active {
+  border-color: rgba(162,155,254,0.9);
+  background: rgba(108,92,231,0.22);
+  box-shadow: 0 0 16px rgba(108,92,231,0.16);
+}
+.profile-title {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  font-size: 13px;
+  font-weight: 600;
+}
+.profile-badge {
+  border-radius: 999px;
+  border: 1px solid rgba(162,155,254,0.55);
+  color: var(--accent-glow);
+  font-size: 10px;
+  padding: 2px 7px;
+}
+.profile-card:not(.active) .profile-badge {
+  display: none;
+}
+.profile-desc {
+  margin-top: 5px;
+  color: var(--text-dim);
+  font-size: 11px;
+  line-height: 1.35;
+}
+.runtime-strip {
+  border: 1px solid rgba(255,255,255,0.08);
+  border-radius: 8px;
+  background: rgba(255,255,255,0.04);
+  padding: 9px 10px;
+  font-size: 12px;
+  color: var(--text);
+  line-height: 1.4;
+}
+.runtime-strip.warn {
+  border-color: rgba(243,156,18,0.5);
+  background: rgba(243,156,18,0.12);
+}
+.advanced-toggle {
+  width: 100%;
+  min-height: 30px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: rgba(255,255,255,0.04);
+  color: var(--text);
+  cursor: pointer;
+  font: inherit;
+}
+.advanced-settings.hidden { display: none; }
 select, input[type="text"], input[type="number"] {
   width: 100%;
   min-height: 32px;
@@ -273,6 +340,11 @@ input[type="checkbox"] { width: 16px; height: 16px; }
   display: flex;
   gap: 8px;
   margin-top: 14px;
+  position: sticky;
+  bottom: 0;
+  padding: 10px 0 4px;
+  background: linear-gradient(to top, rgba(10,10,15,1), rgba(10,10,15,0.92));
+  z-index: 30;
 }
 .text-btn {
   flex: 1;
@@ -385,42 +457,50 @@ input[type="checkbox"] { width: 16px; height: 16px; }
 
     <div class="settings-group">
       <h2>模型</h2>
-      <label class="field">性能档位
-        <select id="performanceProfile">
-          <option value="lightweight">轻量兼容</option>
-          <option value="extreme_gpu">GPU 极致性能</option>
-        </select>
-        <span class="field-note" id="performanceHint"></span>
-      </label>
-      <label class="field">STT 模型
-        <select id="sttModel">
-          <option value="tiny">tiny</option>
-          <option value="base">base</option>
-          <option value="small">small</option>
-          <option value="medium">medium</option>
-          <option value="large-v3">large-v3</option>
-        </select>
-      </label>
-      <label class="field">STT 设备
-        <select id="sttDevice">
-          <option value="cpu">cpu</option>
-          <option value="cuda">cuda</option>
-          <option value="auto">auto</option>
-        </select>
-      </label>
-      <label class="field">STT 精度
-        <select id="sttComputeType">
-          <option value="int8">int8</option>
-          <option value="int8_float16">int8_float16</option>
-          <option value="float16">float16</option>
-          <option value="auto">auto</option>
-        </select>
-      </label>
-      <label class="field">TTS 音色<input id="ttsVoice" type="text"></label>
-      <label class="field">Hermes 地址<input id="hermesBaseUrl" type="text"></label>
-      <label class="field">Hermes 模型<input id="hermesModel" type="text"></label>
-      <label class="field">最大回复 tokens<input id="hermesMaxTokens" type="number" min="64" max="4096" step="32"></label>
-      <label class="field">温度<input id="hermesTemperature" type="number" min="0" max="2" step="0.1"></label>
+      <input id="performanceProfile" type="hidden" value="lightweight">
+      <div class="profile-grid">
+        <button class="profile-card" id="profileLightweight" type="button" data-profile="lightweight">
+          <div class="profile-title"><span>轻量兼容</span><span class="profile-badge">运行中</span></div>
+          <div class="profile-desc">适配绝大多数机器，使用 CPU 小模型，启动稳、资源占用低。</div>
+        </button>
+        <button class="profile-card" id="profileExtremeGpu" type="button" data-profile="extreme_gpu">
+          <div class="profile-title"><span>GPU 极致性能</span><span class="profile-badge">运行中</span></div>
+          <div class="profile-desc">使用 CUDA 和更大 STT 模型。需要 NVIDIA CUDA/cuBLAS 运行库完整可用。</div>
+        </button>
+      </div>
+      <div class="runtime-strip" id="runtimeProfileStatus">当前运行状态读取中...</div>
+      <button class="advanced-toggle" id="advancedToggle" type="button">高级参数</button>
+      <div class="advanced-settings hidden" id="advancedSettings">
+        <label class="field">STT 模型
+          <select id="sttModel">
+            <option value="tiny">tiny</option>
+            <option value="base">base</option>
+            <option value="small">small</option>
+            <option value="medium">medium</option>
+            <option value="large-v3">large-v3</option>
+          </select>
+        </label>
+        <label class="field">STT 设备
+          <select id="sttDevice">
+            <option value="cpu">cpu</option>
+            <option value="cuda">cuda</option>
+            <option value="auto">auto</option>
+          </select>
+        </label>
+        <label class="field">STT 精度
+          <select id="sttComputeType">
+            <option value="int8">int8</option>
+            <option value="int8_float16">int8_float16</option>
+            <option value="float16">float16</option>
+            <option value="auto">auto</option>
+          </select>
+        </label>
+        <label class="field">TTS 音色<input id="ttsVoice" type="text"></label>
+        <label class="field">Hermes 地址<input id="hermesBaseUrl" type="text"></label>
+        <label class="field">Hermes 模型<input id="hermesModel" type="text"></label>
+        <label class="field">最大回复 tokens<input id="hermesMaxTokens" type="number" min="64" max="4096" step="32"></label>
+        <label class="field">温度<input id="hermesTemperature" type="number" min="0" max="2" step="0.1"></label>
+      </div>
     </div>
 
     <div class="settings-group">
@@ -528,6 +608,7 @@ function collectChecks() {
   var hermes = (statusData && statusData.hermes) || {};
   var stt = (statusData && statusData.stt) || {};
   var profile = (settingsData && settingsData.performance && settingsData.performance.profile) || "lightweight";
+  var sttOk = !!(statusData && statusData.stt_ready && !stt.fallback);
   return [
     checkItem("性能档位", true, profile === "extreme_gpu" ? "GPU 极致性能" : "轻量兼容"),
     checkItem("ffmpeg", deps.ffmpeg, deps.ffmpeg_path || "未检测到"),
@@ -536,7 +617,7 @@ function collectChecks() {
     checkItem("Hermes Gateway", hermes.reachable, hermes.base_url || "未配置"),
     checkItem(
       "STT",
-      statusData && statusData.stt_ready,
+      sttOk,
       stt.model ? stt.model + " / " + stt.device + " / " + stt.compute_type : "模型预热中或失败"
     ),
     checkItem("TTS", statusData && statusData.tts_ready, statusData && statusData.tts_ready ? "语音已就绪" : "模型预热中或失败")
@@ -593,7 +674,8 @@ function renderSettings() {
   var ui = settingsData.ui || {};
 
   $("performanceProfile").value = performance.profile || "lightweight";
-  renderPerformanceHint();
+  renderPerformanceCards();
+  renderRuntimeProfileStatus();
   fillDeviceSelect($("inputDevice"), devicesData.inputs, audio.input_device);
   fillDeviceSelect($("outputDevice"), devicesData.outputs, audio.output_device);
   $("inputGain").value = audio.input_gain || 1;
@@ -611,10 +693,34 @@ function renderSettings() {
   $("startMinimized").checked = !!ui.start_minimized;
 }
 
-function renderPerformanceHint() {
+function profileLabel(profileName) {
+  return profileName === "extreme_gpu" ? "GPU 极致性能" : "轻量兼容";
+}
+
+function renderPerformanceCards() {
   var profileName = $("performanceProfile").value || "lightweight";
-  var profile = performanceProfiles[profileName] || {};
-  $("performanceHint").textContent = profile.description || "";
+  document.querySelectorAll(".profile-card").forEach(function(card) {
+    card.classList.toggle("active", card.dataset.profile === profileName);
+  });
+}
+
+function renderRuntimeProfileStatus() {
+  var box = $("runtimeProfileStatus");
+  var stt = (statusData && statusData.stt) || {};
+  var configured = stt.configured || {};
+  var profileName = $("performanceProfile").value || "lightweight";
+  var parts = [
+    "已选择：" + profileLabel(profileName),
+    "实际 STT：" + (stt.model || configured.model || "-") + " / " + (stt.device || configured.device || "-") + " / " + (stt.compute_type || configured.compute_type || "-")
+  ];
+  if (stt.fallback) {
+    box.classList.add("warn");
+    parts.push(stt.fallback_reason || "GPU 不可用，已回退。");
+  } else {
+    box.classList.remove("warn");
+    parts.push(statusData && statusData.stt_ready ? "STT 已就绪" : "STT 预热中");
+  }
+  box.textContent = parts.join(" · ");
 }
 
 function applyProfileToForm() {
@@ -630,7 +736,14 @@ function applyProfileToForm() {
     $("hermesMaxTokens").value = profile.hermes.max_tokens || 300;
     $("hermesTemperature").value = profile.hermes.temperature || 0.7;
   }
-  renderPerformanceHint();
+  renderPerformanceCards();
+  renderRuntimeProfileStatus();
+}
+
+function selectPerformanceProfile(profileName) {
+  $("performanceProfile").value = profileName;
+  applyProfileToForm();
+  setStatus("已选择: " + profileLabel(profileName) + "，点保存后生效");
 }
 
 function deviceValue(id) {
@@ -814,7 +927,11 @@ document.getElementById("closeBtn").addEventListener("click", async () => {
   }
 });
 $("settingsBtn").addEventListener("click", openSettings);
-$("performanceProfile").addEventListener("change", applyProfileToForm);
+$("profileLightweight").addEventListener("click", function() { selectPerformanceProfile("lightweight"); });
+$("profileExtremeGpu").addEventListener("click", function() { selectPerformanceProfile("extreme_gpu"); });
+$("advancedToggle").addEventListener("click", function() {
+  $("advancedSettings").classList.toggle("hidden");
+});
 $("closeSettingsBtn").addEventListener("click", closeSettings);
 $("refreshStatusBtn").addEventListener("click", refreshStatus);
 $("saveSettingsBtn").addEventListener("click", saveSettings);

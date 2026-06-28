@@ -182,7 +182,6 @@ def patch_settings(patch: dict[str, Any]) -> dict[str, Any]:
         if isinstance(known_patch.get("performance"), dict)
         else None
     )
-    current_profile = current.get("performance", {}).get("profile")
-    if profile_name and profile_name != current_profile:
+    if profile_name:
         merged = apply_performance_profile(merged, str(profile_name))
     return save_settings(merged)
