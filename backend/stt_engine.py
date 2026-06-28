@@ -2,6 +2,8 @@
 import asyncio
 import logging
 import os
+import sys
+from pathlib import Path
 
 logger = logging.getLogger(__name__)
 
@@ -10,8 +12,71 @@ _MODEL_CONFIG = None
 _ACTIVE_CONFIG = None
 _LAST_ERROR = None
 _FORCE_LIGHTWEIGHT_FALLBACK = False
+_DLL_DIRECTORY_HANDLES = []
+_CUDA_DLL_DIRS = []
 # 国内HuggingFace镜像加速
 os.environ.setdefault("HF_ENDPOINT", "https://hf-mirror.com")
+
+
+def _candidate_cuda_dll_dirs() -> list[Path]:
+    candidates: list[Path] = []
+    for item in os.getenv("VOICE_CUDA_DLL_DIRS", "").split(os.pathsep):
+        if item.strip():
+            candidates.append(Path(item.strip()))
+
+    cuda_path = os.getenv("CUDA_PATH")
+    if cuda_path:
+        candidates.append(Path(cuda_path) / "bin")
+
+    candidates.append(Path(sys.prefix) / "Lib" / "site-packages" / "ctranslate2")
+
+    user_profile = Path.home()
+    local_app_data = Path(os.getenv("LOCALAPPDATA", user_profile / "AppData" / "Local"))
+    candidates.extend(
+        [
+            user_profile
+            / ".lmstudio"
+            / "extensions"
+            / "backends"
+            / "vendor"
+            / "win-llama-cuda12-vendor-v2",
+            local_app_data
+            / "LM Studio"
+            / "extensions"
+            / "backends"
+            / "vendor"
+            / "win-llama-cuda12-vendor-v2",
+        ]
+    )
+    return candidates
+
+
+def _add_cuda_dll_directories() -> list[str]:
+    if os.name != "nt":
+        return []
+
+    added: list[str] = []
+    seen = {str(path).lower() for path in _CUDA_DLL_DIRS}
+    for path in _candidate_cuda_dll_dirs():
+        if not path.exists() or not path.is_dir():
+            continue
+        has_cuda_dll = any((path / name).exists() for name in ("cublas64_12.dll", "cudnn64_9.dll"))
+        if not has_cuda_dll:
+            continue
+        key = str(path).lower()
+        if key in seen:
+            continue
+        try:
+            handle = os.add_dll_directory(str(path))
+        except OSError:
+            logger.exception("Failed to add CUDA DLL directory: %s", path)
+            continue
+        _DLL_DIRECTORY_HANDLES.append(handle)
+        _CUDA_DLL_DIRS.append(path)
+        seen.add(key)
+        added.append(str(path))
+        logger.info("Added CUDA DLL directory: %s", path)
+    return added
 
 
 def _stt_settings() -> dict:
@@ -75,6 +140,8 @@ def _get_model():
     config = _stt_settings()
     model_config = (config["model"], config["device"], config["compute_type"])
     if _MODEL is None or _MODEL_CONFIG != model_config:
+        if config["device"] == "cuda":
+            _add_cuda_dll_directories()
         from faster_whisper import WhisperModel
 
         logger.info(
@@ -150,4 +217,5 @@ def status() -> dict:
         "configured": config,
         "loaded": _MODEL is not None,
         "last_error": _LAST_ERROR,
+        "cuda_dll_dirs": [str(path) for path in _CUDA_DLL_DIRS],
     }
