@@ -185,12 +185,17 @@ async def websocket_endpoint(ws: WebSocket):
                     wav_path = pipeline.stop_recording()
                     await ws.send_json({"type": "status", "state": "processing"})
                     history = msg.get("history", [])
-                    result = await pipeline.run_turn(wav_path, history)
-                    await ws.send_json({
-                        "type": "result",
-                        "user": result["user"],
-                        "assistant": result["assistant"],
-                    })
+
+                    async def send_pipeline_event(event: dict):
+                        event_type = event.get("type")
+                        if event_type == "user":
+                            await ws.send_json({"type": "user_transcript", "text": event.get("text", "")})
+                        elif event_type == "assistant_delta":
+                            await ws.send_json({"type": "assistant_delta", "delta": event.get("delta", "")})
+                        elif event_type == "assistant_done":
+                            await ws.send_json({"type": "assistant_done", "assistant": event.get("assistant", "")})
+
+                    await pipeline.run_turn_stream(wav_path, history, send_pipeline_event)
                 except Exception as e:
                     logger.exception("Pipeline error")
                     await ws.send_json({"type": "error", "message": str(e)})

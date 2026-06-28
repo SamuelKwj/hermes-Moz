@@ -583,6 +583,8 @@ var performanceProfiles = {};
 var sttModelOptions = ["tiny", "base", "small", "medium", "large-v3"];
 var sttDeviceOptions = ["cpu", "cuda", "auto"];
 var sttComputeOptions = ["int8", "int8_float16", "float16", "auto"];
+var assistantDraftDiv = null;
+var assistantDraftText = "";
 
 ws.onopen = () => console.log("WS connected");
 ws.onclose = () => {
@@ -602,6 +604,17 @@ ws.onmessage = (e) => {
     case "result":
       addMessage("user", msg.user);
       addMessage("assistant", msg.assistant);
+      break;
+    case "user_transcript":
+      assistantDraftDiv = null;
+      assistantDraftText = "";
+      addMessage("user", msg.text);
+      break;
+    case "assistant_delta":
+      appendAssistantDelta(msg.delta || "");
+      break;
+    case "assistant_done":
+      finishAssistantMessage(msg.assistant || assistantDraftText);
       break;
     case "error":
       setStatus("错误: " + msg.message);
@@ -1001,6 +1014,33 @@ function addMessage(role, text) {
   const container = document.getElementById("transcript");
   container.appendChild(div);
   container.scrollTop = container.scrollHeight;
+}
+
+function appendAssistantDelta(delta) {
+  if (!delta) return;
+  const container = document.getElementById("transcript");
+  if (!assistantDraftDiv) {
+    assistantDraftDiv = document.createElement("div");
+    assistantDraftDiv.className = "msg assistant";
+    container.appendChild(assistantDraftDiv);
+  }
+  assistantDraftText += delta;
+  assistantDraftDiv.textContent = assistantDraftText;
+  container.scrollTop = container.scrollHeight;
+}
+
+function finishAssistantMessage(text) {
+  const finalText = text || assistantDraftText;
+  if (!assistantDraftDiv && finalText) {
+    appendAssistantDelta(finalText);
+  } else if (assistantDraftDiv) {
+    assistantDraftDiv.textContent = finalText;
+  }
+  if (finalText) {
+    chatHistory.push({ role: "assistant", content: finalText });
+  }
+  assistantDraftDiv = null;
+  assistantDraftText = "";
 }
 
 const micBtn = document.getElementById("micBtn");

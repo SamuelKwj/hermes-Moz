@@ -2,6 +2,7 @@
 import asyncio
 import logging
 import os
+import re
 import tempfile
 import time
 import wave
@@ -20,6 +21,10 @@ logger = logging.getLogger(__name__)
 SAMPLE_RATE = 16000
 CHANNELS = 1
 BLOCK_DURATION = 0.05  # 50ms blocks for smooth level updates
+TRIM_FRAME_SECONDS = 0.02
+TRIM_PADDING_SECONDS = 0.12
+HARD_SENTENCE_RE = re.compile(r"^(.+?[。！？!?；;\n])", re.S)
+SOFT_BREAKS = "，,、 "
 
 
 def _coerce_device_index(value) -> int | None:
@@ -110,6 +115,67 @@ def _resolve_audio_device(kind: str, configured_device) -> tuple[int, int] | tup
         return None, None
 
 
+def _trim_silence(audio: np.ndarray, sample_rate: int, threshold: float) -> np.ndarray:
+    """Trim leading and trailing silence using short-window RMS."""
+    if audio.size == 0:
+        return audio
+
+    frame_size = max(1, int(sample_rate * TRIM_FRAME_SECONDS))
+    padding = int(sample_rate * TRIM_PADDING_SECONDS)
+    active = []
+    for start in range(0, len(audio), frame_size):
+        frame = audio[start:start + frame_size]
+        if frame.size == 0:
+            continue
+        rms = float(np.sqrt(np.mean(frame**2)))
+        if rms >= threshold:
+            active.append((start, min(start + frame_size, len(audio))))
+
+    if not active:
+        return audio
+
+    start = max(0, active[0][0] - padding)
+    end = min(len(audio), active[-1][1] + padding)
+    trimmed = audio[start:end]
+    logger.info(
+        "Trimmed recording from %.3fs to %.3fs.",
+        len(audio) / sample_rate,
+        len(trimmed) / sample_rate,
+    )
+    return trimmed
+
+
+def _pop_sentence_chunks(buffer: str, force: bool = False) -> tuple[list[str], str]:
+    chunks: list[str] = []
+    text = buffer
+    while text:
+        match = HARD_SENTENCE_RE.match(text)
+        if match:
+            chunk = match.group(1).strip()
+            if chunk:
+                chunks.append(chunk)
+            text = text[len(match.group(1)):].lstrip()
+            continue
+
+        if len(text) >= 36:
+            split_at = -1
+            for mark in SOFT_BREAKS:
+                split_at = max(split_at, text.rfind(mark, 0, 36))
+            if split_at >= 10:
+                chunk = text[:split_at + 1].strip()
+                if chunk:
+                    chunks.append(chunk)
+                text = text[split_at + 1:].lstrip()
+                continue
+
+        break
+
+    if force and text.strip():
+        chunks.append(text.strip())
+        text = ""
+    return chunks, text
+
+
 class VoicePipeline:
     def __init__(self):
         self.hermes = HermesClient()
@@ -186,6 +252,10 @@ class VoicePipeline:
                 raise ValueError("录音太短，请按住说完再松开。")
             if rms < threshold:
                 raise ValueError("没有检测到清晰语音，请靠近麦克风或调低 VAD 阈值。")
+            audio = _trim_silence(audio, self._record_sample_rate, threshold * 0.55)
+            trimmed_duration = len(audio) / self._record_sample_rate
+            if trimmed_duration < min_seconds:
+                raise ValueError("有效语音太短，请按住说完再松开。")
 
         fd, path = tempfile.mkstemp(suffix=".wav", prefix="voice_")
         os.close(fd)
@@ -242,6 +312,63 @@ class VoicePipeline:
                 pass
 
         return {"user": text, "assistant": reply}
+
+    async def run_turn_stream(self, wav_path: str, history: list = None, on_event=None) -> dict:
+        """Full turn with streaming LLM text and sentence-by-sentence TTS playback."""
+        history = history or []
+        if on_event is None:
+            async def on_event(_event):
+                return None
+
+        text = await transcribe(wav_path)
+        logger.info("STT: %s", text)
+        await on_event({"type": "user", "text": text})
+
+        tts_queue: asyncio.Queue[str | None] = asyncio.Queue()
+        player_task = asyncio.create_task(self._tts_play_worker(tts_queue))
+        reply_parts: list[str] = []
+        sentence_buffer = ""
+
+        try:
+            async for delta in self.hermes.chat_stream(text, history):
+                reply_parts.append(delta)
+                sentence_buffer += delta
+                await on_event({"type": "assistant_delta", "delta": delta})
+
+                chunks, sentence_buffer = _pop_sentence_chunks(sentence_buffer)
+                for chunk in chunks:
+                    await tts_queue.put(chunk)
+
+            chunks, sentence_buffer = _pop_sentence_chunks(sentence_buffer, force=True)
+            for chunk in chunks:
+                await tts_queue.put(chunk)
+
+            reply = "".join(reply_parts).strip() or "我刚才没组织好回复。"
+            logger.info("LLM: %s", reply)
+            await on_event({"type": "assistant_done", "assistant": reply})
+            await tts_queue.put(None)
+            await player_task
+            return {"user": text, "assistant": reply}
+        except Exception:
+            player_task.cancel()
+            raise
+
+    async def _tts_play_worker(self, queue: asyncio.Queue) -> None:
+        while True:
+            text = await queue.get()
+            if text is None:
+                return
+            mp3_path = None
+            try:
+                mp3_path = await synthesize(text)
+                logger.info("TTS chunk saved: %s", mp3_path)
+                await self._play_audio(mp3_path)
+            finally:
+                if mp3_path:
+                    try:
+                        os.unlink(mp3_path)
+                    except OSError:
+                        pass
 
     async def _play_audio(self, path: str) -> None:
         """Play MP3 via ffmpeg decode + sounddevice."""
