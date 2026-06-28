@@ -79,6 +79,26 @@ def _add_cuda_dll_directories() -> list[str]:
     return added
 
 
+def _local_stt_model_path(model_name: str) -> Path | None:
+    local_names = {
+        "large-v3": "faster-whisper-large-v3",
+        "faster-whisper-large-v3": "faster-whisper-large-v3",
+    }
+    dirname = local_names.get(model_name)
+    if not dirname:
+        return None
+
+    try:
+        from app_runtime import get_model_cache_dir
+    except Exception:
+        return None
+
+    path = get_model_cache_dir() / dirname
+    if (path / "model.bin").exists() and (path / "config.json").exists():
+        return path
+    return None
+
+
 def _stt_settings() -> dict:
     from settings import load_settings
 
@@ -147,7 +167,9 @@ def _gpu_fallback_reason(error_message: str) -> str:
 def _get_model():
     global _MODEL, _MODEL_CONFIG, _ACTIVE_CONFIG, _LAST_ERROR
     config = _stt_settings()
-    model_config = (config["model"], config["device"], config["compute_type"])
+    local_model_path = _local_stt_model_path(config["model"])
+    model_target = str(local_model_path) if local_model_path else config["model"]
+    model_config = (model_target, config["device"], config["compute_type"])
     if _MODEL is None or _MODEL_CONFIG != model_config:
         if config["device"] == "cuda":
             _add_cuda_dll_directories()
@@ -155,19 +177,22 @@ def _get_model():
 
         logger.info(
             "Loading faster-whisper %s on %s/%s ...",
-            config["model"],
+            model_target,
             config["device"],
             config["compute_type"],
         )
         try:
             _MODEL = WhisperModel(
-                config["model"],
+                model_target,
                 device=config["device"],
                 compute_type=config["compute_type"],
                 local_files_only=False,
             )
             _MODEL_CONFIG = model_config
-            _ACTIVE_CONFIG = {**config, "fallback": False}
+            active_config = {**config, "fallback": False}
+            if local_model_path:
+                active_config["model_path"] = str(local_model_path)
+            _ACTIVE_CONFIG = active_config
             _LAST_ERROR = None
         except Exception as exc:
             _LAST_ERROR = str(exc)
