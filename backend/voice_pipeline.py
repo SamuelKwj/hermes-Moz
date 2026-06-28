@@ -2,8 +2,11 @@
 import asyncio
 import logging
 import os
+import queue
 import re
+import subprocess
 import tempfile
+import threading
 import time
 import wave
 from pathlib import Path
@@ -268,6 +271,91 @@ def _pop_sentence_chunks(buffer: str, force: bool = False, first_chunk: bool = F
     return chunks, (pending + text).strip()
 
 
+def _decode_audio_file(path: str, sample_rate: int) -> np.ndarray:
+    """Decode any TTS output format to mono float32 PCM for continuous playback."""
+    result = subprocess.run(
+        [
+            "ffmpeg",
+            "-hide_banner",
+            "-loglevel",
+            "error",
+            "-i",
+            path,
+            "-f",
+            "f32le",
+            "-acodec",
+            "pcm_f32le",
+            "-ar",
+            str(sample_rate),
+            "-ac",
+            "1",
+            "pipe:1",
+        ],
+        capture_output=True,
+        check=True,
+    )
+    return np.frombuffer(result.stdout, dtype=np.float32).copy()
+
+
+class _ContinuousPcmPlayer:
+    def __init__(self, device: int, sample_rate: int, volume: float):
+        self.device = device
+        self.sample_rate = sample_rate
+        self.volume = volume
+        self._queue: queue.Queue[np.ndarray | None] = queue.Queue(maxsize=16)
+        self._done = threading.Event()
+        self._current = np.empty(0, dtype=np.float32)
+        self._position = 0
+
+    def put(self, audio: np.ndarray) -> None:
+        if self.volume != 1.0:
+            audio = np.clip(audio * self.volume, -1.0, 1.0)
+        self._queue.put(audio.astype(np.float32, copy=False))
+
+    def finish(self) -> None:
+        self._queue.put(None)
+
+    def run(self) -> None:
+        blocksize = max(256, int(self.sample_rate * 0.02))
+        with sd.OutputStream(
+            samplerate=self.sample_rate,
+            channels=CHANNELS,
+            dtype="float32",
+            blocksize=blocksize,
+            device=self.device,
+            callback=self._callback,
+        ):
+            self._done.wait()
+
+    def _callback(self, outdata, frames, time_info, status):
+        if status:
+            logger.warning("Output status: %s", status)
+
+        output = np.zeros(frames, dtype=np.float32)
+        filled = 0
+        while filled < frames:
+            if self._position >= len(self._current):
+                try:
+                    item = self._queue.get_nowait()
+                except queue.Empty:
+                    break
+                if item is None:
+                    self._done.set()
+                    break
+                self._current = item
+                self._position = 0
+
+            remaining = len(self._current) - self._position
+            take = min(frames - filled, remaining)
+            if take <= 0:
+                break
+            output[filled:filled + take] = self._current[self._position:self._position + take]
+            self._position += take
+            filled += take
+
+        outdata[:] = output.reshape(-1, 1)
+
+
 class VoicePipeline:
     def __init__(self):
         self.hermes = HermesClient()
@@ -423,10 +511,11 @@ class VoicePipeline:
         logger.info("STT: %s", text)
         await on_event({"type": "user", "text": text})
 
+        output_device, output_sample_rate, output_volume = self._playback_settings()
+        player = _ContinuousPcmPlayer(output_device, output_sample_rate, output_volume)
         tts_queue: asyncio.Queue[str | None] = asyncio.Queue()
-        audio_queue: asyncio.Queue[str | None] = asyncio.Queue()
-        synth_task = asyncio.create_task(self._tts_synth_worker(tts_queue, audio_queue))
-        player_task = asyncio.create_task(self._tts_audio_player(audio_queue))
+        synth_task = asyncio.create_task(self._tts_synth_worker(tts_queue, player))
+        player_task = asyncio.create_task(self._tts_audio_player(player))
         reply_parts: list[str] = []
         sentence_buffer = ""
         tts_chunks_sent = 0
@@ -462,64 +551,44 @@ class VoicePipeline:
             player_task.cancel()
             raise
 
-    async def _tts_synth_worker(self, text_queue: asyncio.Queue, audio_queue: asyncio.Queue) -> None:
-        try:
-            while True:
-                text = await text_queue.get()
-                if text is None:
-                    await audio_queue.put(None)
-                    return
-                mp3_path = await synthesize(text)
-                logger.info("TTS chunk saved: %s", mp3_path)
-                await audio_queue.put(mp3_path)
-        except Exception:
-            await audio_queue.put(None)
-            raise
-
-    async def _tts_audio_player(self, queue: asyncio.Queue) -> None:
-        while True:
-            mp3_path = await queue.get()
-            if mp3_path is None:
-                return
-            try:
-                await self._play_audio(mp3_path)
-            finally:
-                try:
-                    os.unlink(mp3_path)
-                except OSError:
-                    pass
-
-    async def _play_audio(self, path: str) -> None:
-        """Play MP3 via ffmpeg decode + sounddevice."""
-        import subprocess
-        import tempfile
-
+    def _playback_settings(self) -> tuple[int, int, float]:
         settings = load_settings()
         audio_settings = settings["audio"]
         output_device, output_sample_rate = _resolve_audio_device("output", audio_settings.get("output_device"))
         if output_device is None:
             raise RuntimeError("没有检测到可用扬声器，请在 Windows 声音设置里启用输出设备。")
-        output_volume = float(audio_settings.get("output_volume", 1.0))
+        return output_device, output_sample_rate or SAMPLE_RATE, float(audio_settings.get("output_volume", 1.0))
 
-        fd, wav_path = tempfile.mkstemp(suffix=".wav")
-        os.close(fd)
+    async def _tts_synth_worker(self, text_queue: asyncio.Queue, player: _ContinuousPcmPlayer) -> None:
         try:
-            subprocess.run(
-                ["ffmpeg", "-y", "-i", path, "-f", "wav", "-acodec", "pcm_s16le",
-                 "-ar", str(output_sample_rate or SAMPLE_RATE), "-ac", "1", wav_path],
-                capture_output=True, check=True,
-            )
+            while True:
+                text = await text_queue.get()
+                if text is None:
+                    player.finish()
+                    return
+                mp3_path = await synthesize(text)
+                logger.info("TTS chunk saved: %s", mp3_path)
+                try:
+                    pcm = await asyncio.to_thread(_decode_audio_file, mp3_path, player.sample_rate)
+                    await asyncio.to_thread(player.put, pcm)
+                finally:
+                    try:
+                        os.unlink(mp3_path)
+                    except OSError:
+                        pass
+        except Exception:
+            player.finish()
+            raise
 
-            with wave.open(wav_path, "rb") as wf:
-                data = wf.readframes(wf.getnframes())
-                audio = np.frombuffer(data, dtype=np.int16).astype(np.float32) / 32767.0
-                if output_volume != 1.0:
-                    audio = np.clip(audio * output_volume, -1.0, 1.0)
-                sd.play(audio, wf.getframerate(), device=output_device)
-                sd.wait()
-        finally:
-            try:
-                os.unlink(wav_path)
-            except OSError:
-                pass
+    async def _tts_audio_player(self, player: _ContinuousPcmPlayer) -> None:
+        await asyncio.to_thread(player.run)
+
+    async def _play_audio(self, path: str) -> None:
+        """Play MP3 via ffmpeg decode + sounddevice."""
+        output_device, output_sample_rate, output_volume = self._playback_settings()
+        player = _ContinuousPcmPlayer(output_device, output_sample_rate, output_volume)
+        pcm = await asyncio.to_thread(_decode_audio_file, path, output_sample_rate)
+        await asyncio.to_thread(player.put, pcm)
+        player.finish()
+        await asyncio.to_thread(player.run)
 
