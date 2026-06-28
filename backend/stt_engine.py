@@ -105,7 +105,7 @@ def _stt_settings() -> dict:
     }
 
 
-def _lightweight_fallback(language: str, beam_size: int) -> dict:
+def _lightweight_fallback(language: str, beam_size: int, reason: str | None = None) -> dict:
     return {
         "model": "base",
         "language": language,
@@ -113,7 +113,7 @@ def _lightweight_fallback(language: str, beam_size: int) -> dict:
         "compute_type": "int8",
         "beam_size": beam_size,
         "fallback": True,
-        "fallback_reason": "GPU 运行库不可用，已自动回退轻量模式。",
+        "fallback_reason": reason or "GPU 模式暂不可用，已自动回退轻量模式。",
     }
 
 
@@ -133,6 +133,15 @@ def _force_lightweight_fallback(reason: str) -> None:
     _ACTIVE_CONFIG = None
     _LAST_ERROR = reason
     _FORCE_LIGHTWEIGHT_FALLBACK = True
+
+
+def _gpu_fallback_reason(error_message: str) -> str:
+    message = error_message.lower()
+    if "cublas" in message or "cudnn" in message or ".dll" in message:
+        return "GPU 运行库不可用，已自动回退轻量模式。"
+    if "hub" in message or "cache" in message or "connection" in message or "internet" in message:
+        return "GPU STT 模型未下载成功，已自动回退轻量模式。"
+    return "GPU 模式启动失败，已自动回退轻量模式。"
 
 
 def _get_model():
@@ -165,7 +174,11 @@ def _get_model():
             if config["device"] != "cuda":
                 raise
 
-            fallback = _lightweight_fallback(config["language"], config["beam_size"])
+            fallback = _lightweight_fallback(
+                config["language"],
+                config["beam_size"],
+                _gpu_fallback_reason(_LAST_ERROR),
+            )
             logger.exception("GPU STT model failed to load. Falling back to lightweight STT.")
             _MODEL = WhisperModel(
                 fallback["model"],
