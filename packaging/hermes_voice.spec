@@ -8,6 +8,7 @@ ROOT = Path(SPECPATH).parent
 
 datas = [
     (str(ROOT / "frontend"), "frontend"),
+    (str(ROOT / "assets"), "assets"),
 ]
 
 if (ROOT / "bin").exists():
@@ -64,6 +65,7 @@ exe = EXE(
     target_arch=None,
     codesign_identity=None,
     entitlements_file=None,
+    icon=str(ROOT / "assets" / "icons" / "app-icon.ico"),
 )
 
 coll = COLLECT(

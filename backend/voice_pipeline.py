@@ -654,15 +654,20 @@ class VoicePipeline:
             raise RuntimeError(f"免按键监听打开失败，已尝试可用输入设备: {last_error}")
         raise RuntimeError("没有检测到可用麦克风，无法开启免按键监听。")
 
-    def stop_hands_free(self) -> None:
+    def stop_hands_free(self, submit_active: bool = False) -> bool:
+        submitted = False
         if self._hands_free_stream is not None:
             try:
                 self._hands_free_stream.stop()
             finally:
                 self._hands_free_stream.close()
                 self._hands_free_stream = None
-        self._hands_free_reset()
+        if submit_active and self._hands_free_active and self._hands_free_frames:
+            submitted = self._submit_hands_free_audio(self._hands_free_audio_settings)
+        else:
+            self._hands_free_reset()
         self._hands_free_clear_callbacks()
+        return submitted
 
     def _hands_free_clear_callbacks(self) -> None:
         self._hands_free_on_submit = None
@@ -732,10 +737,10 @@ class VoicePipeline:
         if self._hands_free_silence_seconds >= silence_seconds or duration >= max_seconds:
             self._submit_hands_free_audio(audio_settings)
 
-    def _submit_hands_free_audio(self, audio_settings: dict) -> None:
+    def _submit_hands_free_audio(self, audio_settings: dict) -> bool:
         if not self._hands_free_frames:
             self._hands_free_reset()
-            return
+            return False
 
         frames = self._hands_free_frames
         self._hands_free_reset()
@@ -752,7 +757,7 @@ class VoicePipeline:
             if len(audio) / self._hands_free_sample_rate < min_seconds:
                 if self._hands_free_on_state:
                     self._hands_free_on_state("listening")
-                return
+                return False
 
             fd, path = tempfile.mkstemp(suffix=".wav", prefix="voice_auto_")
             os.close(fd)
@@ -766,6 +771,7 @@ class VoicePipeline:
                 self._hands_free_on_state("processing")
             if self._hands_free_on_submit:
                 self._hands_free_on_submit(path)
+            return True
         except Exception:
             logger.exception("Hands-free submit failed.")
             try:
@@ -775,6 +781,7 @@ class VoicePipeline:
                 pass
             if self._hands_free_on_state:
                 self._hands_free_on_state("listening")
+            return False
 
     def _audio_callback(self, indata, frames, time_info, status):
         if status:
@@ -846,7 +853,22 @@ class VoicePipeline:
             text = gated_text
             logger.info("Wake word accepted; command: %s", text)
         await on_event({"type": "user", "text": text})
+        return await self._run_llm_tts_stream(text, history, on_event)
 
+    async def run_text_turn_stream(self, text: str, history: list = None, on_event=None) -> dict:
+        """Text turn that reuses the same streaming LLM and TTS playback path."""
+        history = history or []
+        text = str(text or "").strip()
+        if on_event is None:
+            async def on_event(_event):
+                return None
+        if not text:
+            return {"user": "", "assistant": "", "ignored": True}
+        logger.info("Text input: %s", text)
+        await on_event({"type": "user", "text": text})
+        return await self._run_llm_tts_stream(text, history, on_event)
+
+    async def _run_llm_tts_stream(self, text: str, history: list, on_event) -> dict:
         output_device, output_sample_rate, output_volume = self._playback_settings()
         player = _ContinuousPcmPlayer(output_device, output_sample_rate, output_volume)
         self._active_player = player

@@ -52,6 +52,10 @@ def get_frontend_index() -> Path:
     return resource_path("frontend", "index.html")
 
 
+def get_icon_file(filename: str = "app-icon.ico") -> Path:
+    return resource_path("assets", "icons", filename)
+
+
 def ensure_runtime_dirs() -> None:
     get_app_dir().mkdir(parents=True, exist_ok=True)
     get_logs_dir().mkdir(parents=True, exist_ok=True)

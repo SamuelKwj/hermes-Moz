@@ -1,0 +1,32 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1024 1024" role="img" aria-label="Hermes Voice icon">
+  <defs>
+    <radialGradient id="core" cx="50%" cy="48%" r="62%">
+      <stop offset="0%" stop-color="#141420"/>
+      <stop offset="62%" stop-color="#0B0B10"/>
+      <stop offset="100%" stop-color="#050505"/>
+    </radialGradient>
+    <filter id="softGlow" x="-30%" y="-30%" width="160%" height="160%">
+      <feGaussianBlur stdDeviation="18" result="blur"/>
+      <feMerge>
+        <feMergeNode in="blur"/>
+        <feMergeNode in="SourceGraphic"/>
+      </feMerge>
+    </filter>
+  </defs>
+
+  <rect x="48" y="48" width="928" height="928" rx="220" fill="#050505"/>
+  <circle cx="512" cy="512" r="400" fill="url(#core)"/>
+  <circle cx="696" cy="300" r="260" fill="#F39A42" opacity="0.09"/>
+  <circle cx="390" cy="700" r="285" fill="#16E6B0" opacity="0.06"/>
+  <path d="M245 744 L790 199" stroke="#F5F2EA" stroke-width="38" stroke-linecap="round" opacity="0.95"/>
+  <path d="M342 784 V270 H682 V784" fill="none" stroke="#FFFFFF" stroke-width="58" stroke-linecap="round" stroke-linejoin="round"/>
+  <g filter="url(#softGlow)">
+    <rect x="423" y="414" width="48" height="196" rx="24" fill="#F5F2EA"/>
+    <rect x="488" y="344" width="48" height="336" rx="24" fill="#FFFFFF"/>
+    <rect x="553" y="444" width="48" height="136" rx="24" fill="#F5F2EA"/>
+  </g>
+  <circle cx="675" cy="314" r="68" fill="#F39A42"/>
+  <circle cx="675" cy="314" r="28" fill="#FFB36A" opacity="0.55"/>
+  <circle cx="286" cy="274" r="18" fill="#F5F2EA"/>
+  <circle cx="755" cy="718" r="12" fill="#16E6B0"/>
+</svg>

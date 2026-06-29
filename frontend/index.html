@@ -3,6 +3,7 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
+<link rel="icon" href="/favicon.ico">
 <title>语音助手</title>
 <style>
 :root {
@@ -180,12 +181,14 @@ canvas#viz {
   flex-direction: column;
   gap: 8px;
   padding: 0 16px;
+  user-select: text;
 }
 .transcript .msg {
   padding: 8px 12px;
   border-radius: 12px;
   max-width: 90%;
   word-break: break-word;
+  user-select: text;
 }
 .transcript .msg.user {
   align-self: flex-end;
@@ -210,6 +213,145 @@ canvas#viz {
 .status.recording { color: var(--danger); }
 .status.processing { color: #f39c12; }
 .status.listening { color: var(--ok); }
+.text-composer {
+  width: calc(100% - 32px);
+  min-height: 42px;
+  display: grid;
+  grid-template-columns: 1fr 42px;
+  gap: 8px;
+  z-index: 1;
+  -webkit-app-region: no-drag;
+}
+.text-composer textarea {
+  width: 100%;
+  min-height: 42px;
+  max-height: 92px;
+  resize: none;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: rgba(255,255,255,0.05);
+  color: var(--text);
+  padding: 9px 10px;
+  font: inherit;
+  font-size: 12px;
+  line-height: 1.35;
+  outline: none;
+  user-select: text;
+}
+.text-composer textarea:focus {
+  border-color: rgba(162,155,254,0.55);
+}
+.send-btn {
+  width: 42px;
+  min-height: 42px;
+  border: 1px solid rgba(162,155,254,0.45);
+  border-radius: 8px;
+  background: rgba(108,92,231,0.22);
+  color: var(--text);
+  cursor: pointer;
+  font: inherit;
+}
+.send-btn:hover {
+  border-color: rgba(162,155,254,0.8);
+}
+.send-btn:disabled {
+  opacity: 0.45;
+  cursor: default;
+}
+body.edge-docked {
+  background: #0b0f24;
+  overflow: hidden;
+}
+body.edge-docked .widget {
+  width: 88px;
+  min-height: 88px;
+  height: 88px;
+  gap: 0;
+  justify-content: center;
+  border-radius: 50%;
+  padding: 0;
+  background: transparent;
+  border: 0;
+  box-shadow: none;
+  overflow: visible;
+}
+body.edge-docked .widget::before {
+  display: none;
+}
+body.edge-docked .header,
+body.edge-docked .transcript,
+body.edge-docked .text-composer,
+body.edge-docked .status,
+body.edge-docked .panel,
+body.edge-docked .modal {
+  display: none;
+}
+body.edge-docked .mic-btn {
+  display: none;
+}
+body.edge-docked .viz-container {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 88px;
+  height: 88px;
+  background:
+    radial-gradient(circle at center, rgba(210,207,255,0.95) 0 4px, rgba(114,97,255,0.82) 5px 8px, transparent 9px),
+    radial-gradient(circle at center, transparent 0 31px, rgba(95,211,255,0.28) 32px 33px, rgba(108,92,231,0.54) 34px 37px, transparent 38px),
+    linear-gradient(145deg, rgba(11,15,36,0.98), rgba(21,15,48,0.98));
+  border: 1px solid rgba(163,220,255,0.28);
+  box-shadow: 0 0 22px rgba(95,211,255,0.18), 0 10px 28px rgba(0,0,0,0.38);
+  animation: docked-orb-pulse 1.8s ease-in-out infinite;
+  transition: border-color 0.18s ease, box-shadow 0.18s ease, filter 0.18s ease;
+  -webkit-app-region: drag;
+  cursor: grab;
+}
+body.edge-docked .viz-container:active {
+  cursor: grabbing;
+}
+body.edge-docked .viz-container::after {
+  content: "";
+  position: absolute;
+  inset: 7px;
+  border-radius: 50%;
+  border: 1px solid rgba(162,155,254,0.20);
+  pointer-events: none;
+}
+body.edge-docked canvas#viz {
+  width: 70px;
+  height: 70px;
+  border-radius: 50%;
+  flex: 0 0 auto;
+  -webkit-app-region: drag;
+}
+@keyframes docked-orb-pulse {
+  0%, 100% { transform: scale(0.96); opacity: 0.78; }
+  50% { transform: scale(1.04); opacity: 1; }
+}
+body.edge-docked.hover-listening .viz-container,
+body.edge-docked.state-listening .viz-container {
+  border-color: rgba(46,204,113,0.62);
+  box-shadow: 0 0 24px rgba(46,204,113,0.28), 0 10px 28px rgba(0,0,0,0.38);
+  filter: saturate(1.16);
+}
+body.edge-docked.state-recording .viz-container {
+  border-color: rgba(231,76,60,0.68);
+  box-shadow: 0 0 30px rgba(231,76,60,0.34), 0 10px 28px rgba(0,0,0,0.38);
+  animation: docked-recording-pulse 0.82s ease-in-out infinite;
+}
+body.edge-docked.state-processing .viz-container {
+  border-color: rgba(243,156,18,0.72);
+  box-shadow: 0 0 26px rgba(243,156,18,0.30), 0 10px 28px rgba(0,0,0,0.38);
+  animation: docked-processing-pulse 1.1s ease-in-out infinite;
+}
+@keyframes docked-recording-pulse {
+  0%, 100% { transform: scale(0.98); filter: saturate(1.2); }
+  50% { transform: scale(1.08); filter: saturate(1.55); }
+}
+@keyframes docked-processing-pulse {
+  0%, 100% { transform: scale(0.98) rotate(0deg); }
+  50% { transform: scale(1.04) rotate(4deg); }
+}
 .panel, .modal {
   position: absolute;
   inset: 0;
@@ -499,6 +641,10 @@ input[type="checkbox"] { width: 16px; height: 16px; }
   </button>
 
   <div class="transcript" id="transcript"></div>
+  <form class="text-composer" id="textComposer">
+    <textarea id="textInput" rows="1" placeholder="粘贴文字，回车发送"></textarea>
+    <button class="send-btn" id="sendTextBtn" type="submit" title="发送文字">发送</button>
+  </form>
   <div class="status" id="status">按住说话，松开发送</div>
 
   <div class="panel hidden" id="settingsPanel">
@@ -573,6 +719,10 @@ input[type="checkbox"] { width: 16px; height: 16px; }
       <label class="field">唤醒词<input id="wakeWords" type="text"></label>
       <label class="field">唤醒回应<input id="wakeReply" type="text"></label>
       <label class="field row">窗口置顶<input id="alwaysOnTop" type="checkbox"></label>
+      <label class="field row">全局快捷键<input id="globalHotkeyEnabled" type="checkbox"></label>
+      <label class="field">快捷键<input id="globalHotkey" type="text" readonly></label>
+      <label class="field row">贴边悬浮<input id="edgeDockEnabled" type="checkbox"></label>
+      <label class="field row">悬停展开时监听<input id="edgeHoverListen" type="checkbox"></label>
       <label class="field row">启动后隐藏<input id="startMinimized" type="checkbox"></label>
     </div>
 
@@ -617,6 +767,11 @@ var assistantDraftDiv = null;
 var assistantDraftText = "";
 var handsFreeMode = false;
 var lastHandsFreeSent = null;
+var recordingSource = null;
+var globalHotkeyWasHandsFree = false;
+var hoverListeningActive = false;
+var hoverStopPending = false;
+var textInputComposing = false;
 
 ws.onopen = () => {
   console.log("WS connected");
@@ -807,6 +962,10 @@ function renderSettings() {
   $("wakeWords").value = ui.wake_words || "小赫,赫尔墨斯,Hermes";
   $("wakeReply").value = ui.wake_reply || "我在，大王请说。";
   $("alwaysOnTop").checked = !!ui.always_on_top;
+  $("globalHotkeyEnabled").checked = ui.global_hotkey_enabled !== false;
+  $("globalHotkey").value = ui.global_hotkey || "Ctrl+Alt+Space";
+  $("edgeDockEnabled").checked = !!ui.edge_dock_enabled;
+  $("edgeHoverListen").checked = !!ui.edge_hover_listen;
   $("startMinimized").checked = !!ui.start_minimized;
 }
 
@@ -1033,16 +1192,26 @@ function readSettingsForm(applyProfile) {
       wake_words: $("wakeWords").value.trim() || "小赫,赫尔墨斯,Hermes",
       wake_reply: $("wakeReply").value.trim() || "我在，大王请说。",
       always_on_top: $("alwaysOnTop").checked,
+      global_hotkey_enabled: $("globalHotkeyEnabled").checked,
+      global_hotkey: $("globalHotkey").value || "Ctrl+Alt+Space",
+      edge_dock_enabled: $("edgeDockEnabled").checked,
+      edge_hover_listen: $("edgeHoverListen").checked,
       start_minimized: $("startMinimized").checked
     }
   };
 }
 
-function syncHandsFreeMode(enabled) {
+function syncHandsFreeMode(enabled, options) {
+  options = options || {};
   handsFreeMode = !!enabled;
-  if (lastHandsFreeSent === handsFreeMode) return;
+  var forceSend = !!options.force || !!options.submitActive;
+  if (!forceSend && lastHandsFreeSent === handsFreeMode) return;
   if (ws.readyState === WebSocket.OPEN) {
-    ws.send(JSON.stringify({ cmd: "set_hands_free", enabled: handsFreeMode }));
+    ws.send(JSON.stringify({
+      cmd: "set_hands_free",
+      enabled: handsFreeMode,
+      submit_active: !!options.submitActive
+    }));
     lastHandsFreeSent = handsFreeMode;
   }
 }
@@ -1102,6 +1271,12 @@ function completeSetup() {
 
 function setState(s) {
   state = s;
+  if (hoverStopPending && s !== "recording") {
+    hoverStopPending = false;
+    syncHandsFreeMode(false);
+  }
+  document.body.classList.remove("state-idle", "state-recording", "state-processing", "state-listening");
+  document.body.classList.add("state-" + s);
   const btn = document.getElementById("micBtn");
   const dot = document.getElementById("statusDot");
   const status = document.getElementById("status");
@@ -1172,46 +1347,151 @@ function finishAssistantMessage(text) {
 const micBtn = document.getElementById("micBtn");
 let isPressing = false;
 
-function canStartRecording() {
-  return !handsFreeMode && (state === "idle" || state === "processing");
+function canStartRecording(force) {
+  return (!!force || !handsFreeMode) && (state === "idle" || state === "processing" || state === "listening");
 }
 
-function requestStartRecording() {
-  if (!canStartRecording()) return;
+function requestStartRecording(source, force) {
+  if (!canStartRecording(force)) return;
   isPressing = true;
+  recordingSource = source || "manual";
   setState("recording");
   ws.send(JSON.stringify({ cmd: "start_record" }));
 }
 
+function requestStopRecording(source) {
+  if (state === "recording" && isPressing && (!source || recordingSource === source)) {
+    isPressing = false;
+    recordingSource = null;
+    ws.send(JSON.stringify({ cmd: "stop_record", history: chatHistory }));
+  }
+}
+
+function isEditableTarget(target) {
+  if (!target) return false;
+  var tag = String(target.tagName || "").toLowerCase();
+  return tag === "input" || tag === "textarea" || target.isContentEditable;
+}
+
 // 鼠标按下开始录音
 micBtn.addEventListener("mousedown", () => {
-  requestStartRecording();
+  requestStartRecording("mouse", false);
 });
 // 鼠标松开停止录音，发送请求
 micBtn.addEventListener("mouseup", () => {
-  if (state === "recording" && isPressing) {
-    isPressing = false;
-    ws.send(JSON.stringify({ cmd: "stop_record", history: chatHistory }));
-  }
+  requestStopRecording("mouse");
 });
 micBtn.addEventListener("mouseleave", () => {
-  if (state === "recording" && isPressing) {
-    isPressing = false;
-    ws.send(JSON.stringify({ cmd: "stop_record", history: chatHistory }));
-  }
+  requestStopRecording("mouse");
 });
 // 空格键快捷支持
 document.addEventListener("keydown", (e) => {
+  if (isEditableTarget(e.target) || e.isComposing || textInputComposing) return;
   if (e.code === "Space" && !e.repeat && canStartRecording()) {
     e.preventDefault();
-    requestStartRecording();
+    requestStartRecording("keyboard", false);
   }
 });
 document.addEventListener("keyup", (e) => {
-  if (e.code === "Space" && state === "recording" && isPressing) {
+  if (isEditableTarget(e.target) || e.isComposing || textInputComposing) return;
+  if (e.code === "Space" && recordingSource === "keyboard") {
     e.preventDefault();
-    isPressing = false;
-    ws.send(JSON.stringify({ cmd: "stop_record", history: chatHistory }));
+    requestStopRecording("keyboard");
+  }
+});
+
+function resizeTextInput() {
+  const input = document.getElementById("textInput");
+  input.style.height = "42px";
+  input.style.height = Math.min(input.scrollHeight, 92) + "px";
+}
+
+function submitTextMessage() {
+  const input = document.getElementById("textInput");
+  const text = input.value.trim();
+  if (!text || ws.readyState !== WebSocket.OPEN || state === "recording") return;
+  input.value = "";
+  resizeTextInput();
+  setState("processing");
+  ws.send(JSON.stringify({ cmd: "text_message", text: text, history: chatHistory }));
+}
+
+document.getElementById("textComposer").addEventListener("submit", (e) => {
+  e.preventDefault();
+  if (textInputComposing) return;
+  submitTextMessage();
+});
+document.getElementById("textInput").addEventListener("input", resizeTextInput);
+document.getElementById("textInput").addEventListener("compositionstart", () => {
+  textInputComposing = true;
+});
+document.getElementById("textInput").addEventListener("compositionend", () => {
+  textInputComposing = false;
+  resizeTextInput();
+});
+document.getElementById("textInput").addEventListener("keydown", (e) => {
+  if (e.isComposing || textInputComposing) return;
+  if (e.key === "Enter" && !e.shiftKey) {
+    e.preventDefault();
+    submitTextMessage();
+  }
+});
+
+window.hermesGlobalHotkeyDown = function() {
+  if (recordingSource === "global") return;
+  globalHotkeyWasHandsFree = handsFreeMode;
+  if (handsFreeMode) syncHandsFreeMode(false);
+  requestStartRecording("global", true);
+};
+
+window.hermesGlobalHotkeyUp = function() {
+  requestStopRecording("global");
+  if (globalHotkeyWasHandsFree) {
+    globalHotkeyWasHandsFree = false;
+    window.setTimeout(function() {
+      var persistentHandsFree = !!(settingsData && settingsData.ui && settingsData.ui.hands_free);
+      if (state !== "recording" && (persistentHandsFree || hoverListeningActive)) {
+        syncHandsFreeMode(true);
+      }
+    }, 650);
+  }
+};
+
+window.hermesSetDocked = function(enabled) {
+  document.body.classList.toggle("edge-docked", !!enabled);
+  if (enabled) closeSettings();
+};
+
+window.hermesSetHoverListening = function(enabled) {
+  enabled = !!enabled;
+  if (hoverListeningActive === enabled) return;
+  hoverListeningActive = enabled;
+  document.body.classList.toggle("hover-listening", enabled);
+  if (enabled) {
+    if (state !== "recording") syncHandsFreeMode(true);
+  } else {
+    var persistentHandsFree = !!(settingsData && settingsData.ui && settingsData.ui.hands_free);
+    if (persistentHandsFree) {
+      hoverStopPending = false;
+      return;
+    }
+    if (state === "recording" && recordingSource !== "global" && recordingSource !== "keyboard" && recordingSource !== "mouse") {
+      hoverStopPending = false;
+      syncHandsFreeMode(false, { submitActive: true, force: true });
+    } else {
+      hoverStopPending = false;
+      syncHandsFreeMode(false);
+    }
+  }
+};
+document.getElementById("viz").addEventListener("dblclick", async function() {
+  if (!document.body.classList.contains("edge-docked")) return;
+  try {
+    if (window.pywebview && window.pywebview.api && window.pywebview.api.show_main_window) {
+      await window.pywebview.api.show_main_window();
+    }
+  } catch (error) {
+    console.error(error);
   }
 });
 // 关闭按钮逻辑

@@ -14,6 +14,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parent))
 from app_runtime import (
     configure_logging,
     configure_model_cache,
+    get_icon_file,
     get_frontend_index,
     prepend_bundled_bin_to_path,
 )
@@ -80,6 +81,11 @@ async def _warm_tts_engine():
 @app.get("/")
 async def root():
     return FileResponse(get_frontend_index())
+
+
+@app.get("/favicon.ico", include_in_schema=False)
+async def favicon():
+    return FileResponse(get_icon_file())
 
 
 @app.get("/api/config.js")
@@ -316,6 +322,15 @@ async def websocket_endpoint(ws: WebSocket):
             run_pipeline_turn(wav_path, history or [], turn_generation, require_wake, hands_free_turn)
         )
 
+    def begin_text_turn(text: str, history: list | None = None) -> None:
+        nonlocal turn_task, turn_generation
+        interrupt_turn()
+        pipeline.pause_hands_free(9999.0)
+        turn_generation += 1
+        turn_task = asyncio.create_task(
+            run_text_pipeline_turn(text, history or [], turn_generation)
+        )
+
     async def send_hands_free_state(state: str) -> None:
         if state == "listening":
             await send_json({"type": "status", "state": "listening"})
@@ -346,12 +361,13 @@ async def websocket_endpoint(ws: WebSocket):
         hands_free_enabled = True
         return True
 
-    def stop_hands_free_if_needed() -> None:
+    def stop_hands_free_if_needed(submit_active: bool = False) -> bool:
         nonlocal hands_free_enabled
         if not hands_free_enabled:
-            return
-        pipeline.stop_hands_free()
+            return False
+        submitted = pipeline.stop_hands_free(submit_active=submit_active)
         hands_free_enabled = False
+        return submitted
 
     async def play_wake_prompt(generation: int) -> None:
         settings = load_settings()
@@ -442,6 +458,36 @@ async def websocket_endpoint(ws: WebSocket):
                 await send_json({"type": "status", "state": "listening" if hands_free_enabled else "idle"})
                 turn_task = None
 
+    async def run_text_pipeline_turn(text: str, history: list, generation: int) -> None:
+        nonlocal turn_task
+        try:
+            async def send_pipeline_event(event: dict):
+                if generation != turn_generation:
+                    return
+                event_type = event.get("type")
+                if event_type == "user":
+                    await send_json({"type": "user_transcript", "text": event.get("text", "")})
+                elif event_type == "assistant_delta":
+                    await send_json({"type": "assistant_delta", "delta": event.get("delta", "")})
+                elif event_type == "assistant_done":
+                    await send_json({"type": "assistant_done", "assistant": event.get("assistant", "")})
+
+            await pipeline.run_text_turn_stream(text, history, send_pipeline_event)
+        except asyncio.CancelledError:
+            logger.info("Text pipeline turn interrupted.")
+        except Exception as e:
+            if generation == turn_generation:
+                logger.exception("Text pipeline error")
+                await send_json({"type": "error", "message": str(e)})
+        finally:
+            if generation == turn_generation:
+                if hands_free_enabled:
+                    settings = load_settings()
+                    resume_delay = float(settings["audio"].get("hands_free_resume_delay_seconds", 0.45))
+                    pipeline.pause_hands_free(resume_delay, replace=True)
+                await send_json({"type": "status", "state": "listening" if hands_free_enabled else "idle"})
+                turn_task = None
+
     try:
         while True:
             msg = await ws.receive_json()
@@ -471,6 +517,13 @@ async def websocket_endpoint(ws: WebSocket):
                     await send_json({"type": "error", "message": str(e)})
                     await send_json({"type": "status", "state": "idle"})
 
+            elif cmd == "text_message":
+                text = str(msg.get("text", "")).strip()
+                if text:
+                    logger.info("Text message")
+                    await send_json({"type": "status", "state": "processing"})
+                    begin_text_turn(text, msg.get("history", []))
+
             elif cmd == "cancel":
                 logger.info("Cancel recording")
                 interrupt_turn()
@@ -487,8 +540,8 @@ async def websocket_endpoint(ws: WebSocket):
                         if started or turn_task is None:
                             await send_json({"type": "status", "state": "listening"})
                     else:
-                        stop_hands_free_if_needed()
-                        await send_json({"type": "status", "state": "idle"})
+                        submitted = stop_hands_free_if_needed(bool(msg.get("submit_active", False)))
+                        await send_json({"type": "status", "state": "processing" if submitted else "idle"})
                 except Exception as e:
                     logger.exception("Hands-free mode failed")
                     stop_hands_free_if_needed()
