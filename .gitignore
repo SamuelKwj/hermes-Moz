@@ -6,5 +6,6 @@ work/
 .venv/
 dist/
 build/
+bin/
 *.spec
 !packaging/*.spec

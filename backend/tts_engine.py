@@ -46,8 +46,16 @@ async def _synthesize_edge_mp3(text: str, tts_settings: dict) -> str:
     fd, retry_path = tempfile.mkstemp(suffix=".mp3", prefix="tts_")
     os.close(fd)
     communicate = edge_tts.Communicate(text, voice, rate=rate, volume=volume)
-    await communicate.save(retry_path)
-    return retry_path
+    try:
+        await communicate.save(retry_path)
+        return retry_path
+    except Exception:
+        try:
+            os.unlink(retry_path)
+        except OSError:
+            pass
+        logger.warning("edge-tts synthesis failed twice; falling back to Windows native TTS.", exc_info=True)
+        return await asyncio.to_thread(_synthesize_windows_native, text, tts_settings)
 
 
 def _native_rate(edge_rate: str) -> int:

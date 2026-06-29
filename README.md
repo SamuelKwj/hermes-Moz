@@ -12,7 +12,7 @@
 
 - Windows 10/11
 - Python 3.11+
-- ffmpeg 已加入 PATH
+- 源码运行需要 ffmpeg 已加入 PATH；发布构建会从 PATH 复制 `ffmpeg.exe` / `ffplay.exe` 到本地 `bin\` 并打进安装包
 - Hermes Gateway 运行在 `http://127.0.0.1:8642`，默认密钥 `bridge-secret-key`
 
 ## 安装
@@ -109,6 +109,7 @@ dist\installer\HermesVoiceSetup.exe
 1. 在干净 Windows 环境验证 WebView2、ffmpeg、麦克风权限。
 2. 验证开始菜单、桌面快捷方式、开机启动和卸载残留。
 3. 做日志导出按钮和错误报告包。
-4. 根据目标机器决定是否预置 faster-whisper 模型和 ffmpeg。
+4. 根据目标机器决定是否预置 faster-whisper 模型。
+5. 公开售卖前核对 FFmpeg、安装器、模型和 TTS 相关许可证，并补代码签名。
 
 更多打包说明见 `docs\packaging.md`。

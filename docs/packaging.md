@@ -42,14 +42,29 @@ This keeps the installer smaller and avoids rebuilding the installer when the ST
 
 ## ffmpeg Strategy
 
-The app first uses a bundled `bin\ffmpeg.exe` when present, then falls back to PATH. To ship ffmpeg with the app, place binaries here before running PyInstaller:
+The app first uses a bundled `bin\ffmpeg.exe` when present, then falls back to PATH. Release builds prepare this local, git-ignored folder from the developer machine's PATH:
+
+```powershell
+.\scripts\prepare_release_bin.ps1 -Required
+```
+
+That creates:
 
 ```text
 bin\ffmpeg.exe
 bin\ffplay.exe
 ```
 
-The PyInstaller spec automatically includes `bin\` if it exists.
+The PyInstaller build script runs the same preparation step before packaging, and the PyInstaller spec automatically includes `bin\` if it exists. The `bin\` directory is intentionally ignored by git because these are large third-party binaries.
+
+Before public sale, verify the license terms of the exact FFmpeg build being bundled and include any required notices.
+
+References checked on 2026-06-29:
+
+- FFmpeg legal page: https://www.ffmpeg.org/legal.html
+- Gyan FFmpeg builds page: https://www.gyan.dev/ffmpeg/builds/
+- Inno Setup license text: https://jrsoftware.org/files/is/license.txt
+- Inno Setup commercial license page: https://jrsoftware.org/isorder.php
 
 ## Inno Setup
 
