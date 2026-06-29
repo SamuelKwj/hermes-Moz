@@ -20,7 +20,7 @@ from app_runtime import (
 from voice_pipeline import VoicePipeline
 from tts_engine import synthesize
 from settings import PERFORMANCE_PROFILES, get_host, get_port, load_settings, patch_settings
-from system_checks import dependency_status, hermes_status, list_audio_devices, runtime_status
+from system_checks import accelerator_status, dependency_status, hermes_status, list_audio_devices, runtime_status
 
 prepend_bundled_bin_to_path()
 configure_model_cache()
@@ -211,6 +211,7 @@ async def status():
         "tts_ready": _tts_ready,
         "last_error": _last_error,
         "dependencies": dependency_status(),
+        "accelerator": accelerator_status(),
         "runtime": runtime_status(),
         "hermes": await hermes_status(settings),
         "performance_profiles": PERFORMANCE_PROFILES,

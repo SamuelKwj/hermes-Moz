@@ -1,6 +1,7 @@
 """Local runtime checks for productized startup and diagnostics."""
 from __future__ import annotations
 
+import subprocess
 import shutil
 from typing import Any
 
@@ -74,6 +75,47 @@ def dependency_status() -> dict[str, Any]:
     except Exception:
         status["pywebview"] = False
 
+    return status
+
+
+def accelerator_status() -> dict[str, Any]:
+    nvidia_smi_path = shutil.which("nvidia-smi")
+    status: dict[str, Any] = {
+        "nvidia_smi_path": nvidia_smi_path,
+        "nvidia_cuda_available": False,
+        "vendor": None,
+        "message": "未检测到 NVIDIA CUDA，GPU 档可能会自动回退 CPU。",
+    }
+
+    if not nvidia_smi_path:
+        return status
+
+    try:
+        result = subprocess.run(
+            [nvidia_smi_path, "--query-gpu=name,driver_version,memory.total", "--format=csv,noheader"],
+            capture_output=True,
+            text=True,
+            timeout=3,
+            check=False,
+        )
+    except Exception as exc:
+        status["message"] = f"检测 NVIDIA CUDA 失败：{exc}"
+        return status
+
+    if result.returncode != 0:
+        detail = (result.stderr or result.stdout or "").strip()
+        status["message"] = detail or "nvidia-smi 无法正常运行，GPU 档可能会自动回退 CPU。"
+        return status
+
+    first_gpu = (result.stdout or "").strip().splitlines()[0].strip() if result.stdout.strip() else ""
+    status.update(
+        {
+            "nvidia_cuda_available": True,
+            "vendor": "nvidia",
+            "device": first_gpu,
+            "message": "已检测到 NVIDIA CUDA，可尝试 GPU 快速响应。",
+        }
+    )
     return status
 
 

@@ -282,6 +282,9 @@ canvas#viz {
   background: rgba(108,92,231,0.22);
   box-shadow: 0 0 16px rgba(108,92,231,0.16);
 }
+.profile-card.unavailable {
+  border-color: rgba(243,156,18,0.35);
+}
 .profile-title {
   display: flex;
   align-items: center;
@@ -305,6 +308,15 @@ canvas#viz {
   font-size: 11px;
   line-height: 1.35;
 }
+.profile-capability {
+  margin-top: 6px;
+  color: var(--text-dim);
+  font-size: 10px;
+  line-height: 1.3;
+}
+.profile-card.unavailable .profile-capability {
+  color: var(--warn);
+}
 .runtime-strip {
   border: 1px solid rgba(255,255,255,0.08);
   border-radius: 8px;
@@ -313,6 +325,7 @@ canvas#viz {
   font-size: 12px;
   color: var(--text);
   line-height: 1.4;
+  white-space: pre-line;
 }
 .runtime-strip.warn {
   border-color: rgba(243,156,18,0.5);
@@ -522,6 +535,7 @@ input[type="checkbox"] { width: 16px; height: 16px; }
         <button class="profile-card" id="profileExtremeGpu" type="button" data-profile="extreme_gpu">
           <div class="profile-title"><span>GPU 快速响应</span><span class="profile-badge">已选</span></div>
           <div class="profile-desc">使用 small / cuda / float16。比 large-v3 更快，日常中文对话够用。</div>
+          <div class="profile-capability" id="profileExtremeGpuCapability">正在检测 NVIDIA CUDA...</div>
         </button>
       </div>
       <div class="runtime-strip" id="runtimeProfileStatus">当前运行状态读取中...</div>
@@ -696,10 +710,14 @@ function collectChecks() {
   var deps = (statusData && statusData.dependencies) || {};
   var hermes = (statusData && statusData.hermes) || {};
   var stt = (statusData && statusData.stt) || {};
+  var accelerator = (statusData && statusData.accelerator) || {};
   var profile = (settingsData && settingsData.performance && settingsData.performance.profile) || "lightweight";
+  var configuredStt = (settingsData && settingsData.stt) || {};
+  var cudaRequested = profile === "extreme_gpu" || configuredStt.device === "cuda";
   var sttOk = !!(statusData && statusData.stt_ready && !stt.fallback);
   return [
     checkItem("性能档位", true, profileLabel(profile)),
+    checkItem("NVIDIA CUDA", !cudaRequested || !!accelerator.nvidia_cuda_available, accelerator.message || "未检测"),
     checkItem("ffmpeg", deps.ffmpeg, deps.ffmpeg_path || "未检测到"),
     checkItem("麦克风", devicesData.inputs.length > 0, devicesData.inputs.length + " 个输入设备"),
     checkItem("扬声器", devicesData.outputs.length > 0, devicesData.outputs.length + " 个输出设备"),
@@ -797,30 +815,57 @@ function profileLabel(profileName) {
   return profileName === "extreme_gpu" ? "GPU 快速响应" : "轻量兼容";
 }
 
+function hasNvidiaCuda() {
+  return !!(statusData && statusData.accelerator && statusData.accelerator.nvidia_cuda_available);
+}
+
+function formatSttLine(stt) {
+  stt = stt || {};
+  return (stt.model || "-") + " / " + (stt.device || "-") + " / " + (stt.compute_type || "-");
+}
+
 function renderPerformanceCards() {
   var profileName = $("performanceProfile").value || "lightweight";
   document.querySelectorAll(".profile-card").forEach(function(card) {
     card.classList.toggle("active", card.dataset.profile === profileName);
   });
+  var gpuCard = $("profileExtremeGpu");
+  var gpuHint = $("profileExtremeGpuCapability");
+  var accelerator = (statusData && statusData.accelerator) || {};
+  if (gpuCard && gpuHint) {
+    var available = hasNvidiaCuda();
+    gpuCard.classList.toggle("unavailable", !available);
+    gpuHint.textContent = available
+      ? "已检测到 NVIDIA CUDA，可尝试此档。"
+      : "当前不可用：需要 NVIDIA CUDA，选择后可能自动回退 CPU。";
+    if (accelerator.message && !available) {
+      gpuHint.textContent = accelerator.message;
+    }
+  }
 }
 
 function renderRuntimeProfileStatus() {
   var box = $("runtimeProfileStatus");
   var stt = (statusData && statusData.stt) || {};
-  var configured = stt.configured || {};
+  var settingsStt = (settingsData && settingsData.stt) || {};
+  var configured = stt.configured || settingsStt;
+  var accelerator = (statusData && statusData.accelerator) || {};
   var profileName = $("performanceProfile").value || "lightweight";
   var parts = [
     "已选择：" + profileLabel(profileName),
-    "实际 STT：" + (stt.model || configured.model || "-") + " / " + (stt.device || configured.device || "-") + " / " + (stt.compute_type || configured.compute_type || "-")
+    "配置 STT：" + formatSttLine(configured),
+    "实际 STT：" + formatSttLine(stt),
+    "NVIDIA CUDA：" + (accelerator.nvidia_cuda_available ? "已检测到" : "未检测到")
   ];
   if (stt.fallback) {
     box.classList.add("warn");
-    parts.push(stt.fallback_reason || "GPU 不可用，已回退。");
+    parts.push("已自动回退：" + (stt.fallback_reason || "GPU 不可用，当前使用轻量 CPU。"));
+    if (stt.last_error) parts.push("原因：" + stt.last_error);
   } else {
     box.classList.remove("warn");
     parts.push(statusData && statusData.stt_ready ? "STT 已就绪" : "STT 预热中");
   }
-  box.textContent = parts.join(" · ");
+  box.textContent = parts.join("\n");
 }
 
 function sttModelInfo(name) {
@@ -883,7 +928,7 @@ function renderAdvancedOptions() {
     return "未下载";
   });
   renderOptionButtons("sttDeviceOptions", "sttDevice", sttDeviceOptions, function(value) {
-    if (value === "cuda") return "使用 NVIDIA GPU";
+    if (value === "cuda") return hasNvidiaCuda() ? "使用 NVIDIA GPU" : "需要 NVIDIA CUDA，当前可能回退 CPU";
     if (value === "auto") return "自动判断";
     return "稳定兼容";
   });
