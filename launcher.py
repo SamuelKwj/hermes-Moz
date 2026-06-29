@@ -59,9 +59,17 @@ class DesktopApi:
     def show_main_window(self):
         if self._window is None:
             return {"ok": False, "message": "Window is not ready."}
-        self._window.show()
         if _edge_dock_controller:
             _edge_dock_controller.show_main_window()
+        else:
+            self._window.show()
+        return {"ok": True}
+
+    def dock_window(self):
+        if self._window is None:
+            return {"ok": False, "message": "Window is not ready."}
+        if _edge_dock_controller:
+            _edge_dock_controller.dock_window()
         return {"ok": True}
 
 
@@ -122,9 +130,10 @@ def _create_tray_icon(window):
         draw.ellipse((41, 15, 53, 27), fill=(243, 154, 66, 255))
 
     def show_window(icon, item):
-        window.show()
         if _edge_dock_controller:
             _edge_dock_controller.show_main_window()
+        else:
+            window.show()
 
     def hide_window(icon, item):
         window.hide()
@@ -211,17 +220,46 @@ def _clear_window_region(window) -> None:
 
 
 class GlobalHotkeyController(threading.Thread):
-    """Windows-only Ctrl+Alt+Space hold-to-talk hotkey."""
+    """Windows-only configurable hold-to-talk hotkey."""
 
-    VK_SPACE = 0x20
     VK_CONTROL = 0x11
     VK_MENU = 0x12
+    VK_SHIFT = 0x10
+    VK_LWIN = 0x5B
+    VK_RWIN = 0x5C
+    VK_LSHIFT = 0xA0
+    VK_RSHIFT = 0xA1
+    VK_LCONTROL = 0xA2
+    VK_RCONTROL = 0xA3
+    VK_LMENU = 0xA4
+    VK_RMENU = 0xA5
     WH_KEYBOARD_LL = 13
     WM_KEYDOWN = 0x0100
     WM_KEYUP = 0x0101
     WM_SYSKEYDOWN = 0x0104
     WM_SYSKEYUP = 0x0105
     WM_QUIT = 0x0012
+    DEFAULT_HOTKEY = "Ctrl+Alt+Z"
+    KEY_CODES = {
+        "SPACE": 0x20,
+        "TAB": 0x09,
+        "ENTER": 0x0D,
+        "ESC": 0x1B,
+        "ESCAPE": 0x1B,
+        "BACKSPACE": 0x08,
+        "F1": 0x70,
+        "F2": 0x71,
+        "F3": 0x72,
+        "F4": 0x73,
+        "F5": 0x74,
+        "F6": 0x75,
+        "F7": 0x76,
+        "F8": 0x77,
+        "F9": 0x78,
+        "F10": 0x79,
+        "F11": 0x7A,
+        "F12": 0x7B,
+    }
 
     class KBDLLHOOKSTRUCT(ctypes.Structure):
         _fields_ = [
@@ -253,20 +291,66 @@ class GlobalHotkeyController(threading.Thread):
         except Exception:
             return True
 
-    def _modifiers_down(self) -> bool:
+    def _hotkey(self) -> tuple[set[str], int]:
+        try:
+            value = str(load_settings()["ui"].get("global_hotkey", self.DEFAULT_HOTKEY))
+        except Exception:
+            value = self.DEFAULT_HOTKEY
+        parts = [part.strip().upper() for part in value.replace(" ", "").split("+") if part.strip()]
+        modifiers = {part for part in parts if part in {"CTRL", "CONTROL", "ALT", "SHIFT", "WIN", "WINDOWS"}}
+        key_parts = [part for part in parts if part not in modifiers]
+        key_name = key_parts[-1] if key_parts else "Z"
+        key_code = self.KEY_CODES.get(key_name)
+        if key_code is None and len(key_name) == 1:
+            key_code = ord(key_name)
+        if not key_code:
+            modifiers = {"CTRL", "ALT"}
+            key_code = ord("Z")
+        normalized_modifiers = set()
+        if "CTRL" in modifiers or "CONTROL" in modifiers:
+            normalized_modifiers.add("CTRL")
+        if "ALT" in modifiers:
+            normalized_modifiers.add("ALT")
+        if "SHIFT" in modifiers:
+            normalized_modifiers.add("SHIFT")
+        if "WIN" in modifiers or "WINDOWS" in modifiers:
+            normalized_modifiers.add("WIN")
+        return normalized_modifiers, key_code
+
+    def _modifier_key(self, vk_code: int) -> bool:
+        return vk_code in (
+            self.VK_CONTROL,
+            self.VK_LCONTROL,
+            self.VK_RCONTROL,
+            self.VK_MENU,
+            self.VK_LMENU,
+            self.VK_RMENU,
+            self.VK_SHIFT,
+            self.VK_LSHIFT,
+            self.VK_RSHIFT,
+            self.VK_LWIN,
+            self.VK_RWIN,
+        )
+
+    def _modifiers_down(self, required: set[str]) -> bool:
         user32 = ctypes.windll.user32
-        ctrl_down = bool(user32.GetAsyncKeyState(self.VK_CONTROL) & 0x8000)
-        alt_down = bool(user32.GetAsyncKeyState(self.VK_MENU) & 0x8000)
-        return ctrl_down and alt_down
+        checks = {
+            "CTRL": bool((user32.GetAsyncKeyState(self.VK_CONTROL) | user32.GetAsyncKeyState(self.VK_LCONTROL) | user32.GetAsyncKeyState(self.VK_RCONTROL)) & 0x8000),
+            "ALT": bool((user32.GetAsyncKeyState(self.VK_MENU) | user32.GetAsyncKeyState(self.VK_LMENU) | user32.GetAsyncKeyState(self.VK_RMENU)) & 0x8000),
+            "SHIFT": bool((user32.GetAsyncKeyState(self.VK_SHIFT) | user32.GetAsyncKeyState(self.VK_LSHIFT) | user32.GetAsyncKeyState(self.VK_RSHIFT)) & 0x8000),
+            "WIN": bool((user32.GetAsyncKeyState(self.VK_LWIN) | user32.GetAsyncKeyState(self.VK_RWIN)) & 0x8000),
+        }
+        return all(checks.get(modifier, False) for modifier in required)
 
     def _handle(self, n_code, w_param, l_param):
         if n_code == 0:
             data = ctypes.cast(ctypes.c_void_p(l_param), ctypes.POINTER(self.KBDLLHOOKSTRUCT)).contents
-            is_space = data.vkCode == self.VK_SPACE
-            is_modifier = data.vkCode in (self.VK_CONTROL, self.VK_MENU)
+            modifiers, trigger_key = self._hotkey()
+            is_trigger = data.vkCode == trigger_key
+            is_modifier = self._modifier_key(data.vkCode)
             enabled = self._enabled()
-            modifiers_down = self._modifiers_down()
-            if is_space and enabled and (modifiers_down or self._pressed):
+            modifiers_down = self._modifiers_down(modifiers)
+            if is_trigger and enabled and (modifiers_down or self._pressed):
                 if w_param in (self.WM_KEYDOWN, self.WM_SYSKEYDOWN) and not self._pressed:
                     self._pressed = True
                     _evaluate_js(self.window, "window.hermesGlobalHotkeyDown && window.hermesGlobalHotkeyDown();")
@@ -340,9 +424,8 @@ class EdgeDockController(threading.Thread):
     APP_WIDTH = 360
     APP_HEIGHT = 560
     ORB_SIZE = 88
-    ORB_VISIBLE_WIDTH = 24
+    ORB_VISIBLE_WIDTH = 48
     EDGE_GAP = 0
-    HOVER_LISTEN_DELAY_SECONDS = 1.0
     COLLAPSE_GRACE_SECONDS = 1.0
     HOVER_SLOP = 18
     DOCK_MOVE_TOLERANCE = 28
@@ -353,6 +436,7 @@ class EdgeDockController(threading.Thread):
         self._running = threading.Event()
         self._running.set()
         self._main_requested = threading.Event()
+        self._dock_requested = threading.Event()
         self._active = False
         self._main_mode = False
         self._revealed = False
@@ -360,8 +444,6 @@ class EdgeDockController(threading.Thread):
         self._main_hold_until = 0.0
         self._orb_dock_x = None
         self._main_dock_x = None
-        self._hover_started_at = 0.0
-        self._hover_listening = False
 
     def stop(self):
         self._running.clear()
@@ -369,16 +451,29 @@ class EdgeDockController(threading.Thread):
     def show_main_window(self):
         self._main_requested.set()
 
+    def dock_window(self):
+        self._dock_requested.set()
+
+    def _window_scale(self) -> float:
+        native = getattr(self.window, "native", None)
+        try:
+            scale = float(getattr(native, "_scale", 1.0) or 1.0)
+        except Exception:
+            scale = 1.0
+        return scale if scale > 0 else 1.0
+
     def _screen_size(self) -> tuple[int, int]:
         if os.name == "nt":
             user32 = ctypes.windll.user32
-            return int(user32.GetSystemMetrics(0)), int(user32.GetSystemMetrics(1))
+            scale = self._window_scale()
+            return int(user32.GetSystemMetrics(0) / scale), int(user32.GetSystemMetrics(1) / scale)
         return 1920, 1080
 
     def _cursor_pos(self) -> tuple[int, int]:
         point = ctypes.wintypes.POINT()
         ctypes.windll.user32.GetCursorPos(ctypes.byref(point))
-        return int(point.x), int(point.y)
+        scale = self._window_scale()
+        return int(point.x / scale), int(point.y / scale)
 
     def _target_y(self, height: int) -> int:
         screen_width, screen_height = self._screen_size()
@@ -388,6 +483,12 @@ class EdgeDockController(threading.Thread):
             current_y = max(40, (screen_height - height) // 2)
         return max(0, min(current_y, max(0, screen_height - height)))
 
+    def _center_position(self, width: int, height: int) -> tuple[int, int]:
+        screen_width, screen_height = self._screen_size()
+        x = max(0, (screen_width - width) // 2)
+        y = max(0, (screen_height - height) // 2)
+        return x, y
+
     def _collapse(self):
         screen_width, _ = self._screen_size()
         y = self._target_y(self.ORB_SIZE)
@@ -395,12 +496,10 @@ class EdgeDockController(threading.Thread):
         self.window.resize(self.ORB_SIZE, self.ORB_SIZE)
         self.window.move(dock_x, y)
         _set_window_circle_region(self.window)
-        self._set_hover_listening(False)
         _evaluate_js(self.window, "window.hermesSetDocked && window.hermesSetDocked(true);")
         self._main_mode = False
         self._revealed = False
         self._orb_dock_x = dock_x
-        self._hover_started_at = 0.0
         self._active = True
 
     def _reveal(self):
@@ -413,18 +512,19 @@ class EdgeDockController(threading.Thread):
         _evaluate_js(self.window, "window.hermesSetDocked && window.hermesSetDocked(true);")
         self._revealed = True
         self._orb_dock_x = dock_x
-        self._hover_started_at = time.time()
         self._active = True
 
-    def _show_main(self, dock_to_edge: bool = True):
+    def _show_main(self, dock_to_edge: bool = True, center: bool = False):
         screen_width, _ = self._screen_size()
-        y = self._target_y(self.APP_HEIGHT)
         current_x = self.window.x if isinstance(self.window.x, int) else screen_width - self.APP_WIDTH
-        if dock_to_edge:
+        if center:
+            main_x, y = self._center_position(self.APP_WIDTH, self.APP_HEIGHT)
+        elif dock_to_edge:
             main_x = screen_width - self.APP_WIDTH - self.EDGE_GAP
+            y = self._target_y(self.APP_HEIGHT)
         else:
             main_x = max(0, min(current_x, max(0, screen_width - self.APP_WIDTH)))
-        self._set_hover_listening(False)
+            y = self._target_y(self.APP_HEIGHT)
         _clear_window_region(self.window)
         _evaluate_js(self.window, "window.hermesSetDocked && window.hermesSetDocked(false);")
         self.window.resize(self.APP_WIDTH, self.APP_HEIGHT)
@@ -434,22 +534,11 @@ class EdgeDockController(threading.Thread):
         self._main_mode = True
         self._revealed = False
         self._orb_dock_x = None
-        self._main_dock_x = main_x if dock_to_edge else None
-        self._hover_started_at = 0.0
+        self._main_dock_x = main_x if dock_to_edge and not center else None
         now = time.time()
         self._last_inside_at = now
         self._main_hold_until = now + 6.0
         self._active = True
-
-    def _set_hover_listening(self, enabled: bool):
-        if self._hover_listening == enabled:
-            return
-        self._hover_listening = enabled
-        script_value = "true" if enabled else "false"
-        _evaluate_js(
-            self.window,
-            f"window.hermesSetHoverListening && window.hermesSetHoverListening({script_value});",
-        )
 
     def _inside_window(self) -> bool:
         x, y = self._cursor_pos()
@@ -487,25 +576,26 @@ class EdgeDockController(threading.Thread):
         left = self.window.x if isinstance(self.window.x, int) else self._main_dock_x
         return abs(left - self._main_dock_x) <= self.DOCK_MOVE_TOLERANCE
 
-    def _settings(self) -> tuple[bool, bool]:
+    def _settings(self) -> bool:
         try:
             ui = load_settings()["ui"]
-            return bool(ui.get("edge_dock_enabled", False)), bool(ui.get("edge_hover_listen", False))
+            return bool(ui.get("edge_dock_enabled", False))
         except Exception:
-            return False, False
+            return False
 
     def run(self):
         time.sleep(1.0)
         while self._running.is_set():
-            enabled, hover_listen = self._settings()
+            enabled = self._settings()
             if not enabled:
                 if self._main_requested.is_set():
                     self._main_requested.clear()
-                    self._show_main(dock_to_edge=True)
+                    self._show_main(dock_to_edge=False, center=True)
+                    time.sleep(0.12)
+                    continue
                 if self._active:
                     screen_width, _ = self._screen_size()
                     y = self._target_y(self.APP_HEIGHT)
-                    self._set_hover_listening(False)
                     _clear_window_region(self.window)
                     _evaluate_js(self.window, "window.hermesSetDocked && window.hermesSetDocked(false);")
                     self.window.resize(self.APP_WIDTH, self.APP_HEIGHT)
@@ -516,13 +606,18 @@ class EdgeDockController(threading.Thread):
                     self._revealed = False
                     self._orb_dock_x = None
                     self._main_dock_x = None
-                    self._hover_started_at = 0.0
                 time.sleep(0.5)
+                continue
+
+            if self._dock_requested.is_set():
+                self._dock_requested.clear()
+                self._collapse()
+                time.sleep(0.12)
                 continue
 
             if self._main_requested.is_set():
                 self._main_requested.clear()
-                self._show_main(dock_to_edge=True)
+                self._show_main(dock_to_edge=False, center=True)
 
             if self._main_mode:
                 now = time.time()
@@ -551,10 +646,6 @@ class EdgeDockController(threading.Thread):
                 self._last_inside_at = now
                 if not self._revealed:
                     self._reveal()
-                elif not hover_listen and self._hover_listening:
-                    self._set_hover_listening(False)
-                elif hover_listen and not self._hover_listening and now - self._hover_started_at >= self.HOVER_LISTEN_DELAY_SECONDS:
-                    self._set_hover_listening(True)
             elif self._revealed and now - self._last_inside_at > self.COLLAPSE_GRACE_SECONDS:
                 self._collapse()
 

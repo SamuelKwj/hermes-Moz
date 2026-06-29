@@ -654,20 +654,15 @@ class VoicePipeline:
             raise RuntimeError(f"免按键监听打开失败，已尝试可用输入设备: {last_error}")
         raise RuntimeError("没有检测到可用麦克风，无法开启免按键监听。")
 
-    def stop_hands_free(self, submit_active: bool = False) -> bool:
-        submitted = False
+    def stop_hands_free(self) -> None:
         if self._hands_free_stream is not None:
             try:
                 self._hands_free_stream.stop()
             finally:
                 self._hands_free_stream.close()
-                self._hands_free_stream = None
-        if submit_active and self._hands_free_active and self._hands_free_frames:
-            submitted = self._submit_hands_free_audio(self._hands_free_audio_settings)
-        else:
-            self._hands_free_reset()
+        self._hands_free_stream = None
+        self._hands_free_reset()
         self._hands_free_clear_callbacks()
-        return submitted
 
     def _hands_free_clear_callbacks(self) -> None:
         self._hands_free_on_submit = None

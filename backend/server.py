@@ -361,13 +361,12 @@ async def websocket_endpoint(ws: WebSocket):
         hands_free_enabled = True
         return True
 
-    def stop_hands_free_if_needed(submit_active: bool = False) -> bool:
+    def stop_hands_free_if_needed() -> None:
         nonlocal hands_free_enabled
         if not hands_free_enabled:
-            return False
-        submitted = pipeline.stop_hands_free(submit_active=submit_active)
+            return
+        pipeline.stop_hands_free()
         hands_free_enabled = False
-        return submitted
 
     async def play_wake_prompt(generation: int) -> None:
         settings = load_settings()
@@ -540,8 +539,8 @@ async def websocket_endpoint(ws: WebSocket):
                         if started or turn_task is None:
                             await send_json({"type": "status", "state": "listening"})
                     else:
-                        submitted = stop_hands_free_if_needed(bool(msg.get("submit_active", False)))
-                        await send_json({"type": "status", "state": "processing" if submitted else "idle"})
+                        stop_hands_free_if_needed()
+                        await send_json({"type": "status", "state": "idle"})
                 except Exception as e:
                     logger.exception("Hands-free mode failed")
                     stop_hands_free_if_needed()

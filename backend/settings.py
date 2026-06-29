@@ -11,6 +11,8 @@ from app_runtime import get_app_dir
 
 APP_DIR = get_app_dir()
 SETTINGS_PATH = APP_DIR / "settings.json"
+DEFAULT_GLOBAL_HOTKEY = "Ctrl+Alt+Z"
+LEGACY_GLOBAL_HOTKEYS = {"Ctrl+Alt+Space", "Ctrl+Alt+F12", "Ctrl+Alt+Q"}
 
 PERFORMANCE_PROFILES: dict[str, dict[str, Any]] = {
     "lightweight": {
@@ -102,9 +104,8 @@ DEFAULT_SETTINGS: dict[str, Any] = {
         "wake_followup_seconds": 60.0,
         "hotkey": "Space",
         "global_hotkey_enabled": True,
-        "global_hotkey": "Ctrl+Alt+Space",
+        "global_hotkey": DEFAULT_GLOBAL_HOTKEY,
         "edge_dock_enabled": False,
-        "edge_hover_listen": False,
         "start_minimized": False,
         "launch_on_startup": False,
     },
@@ -139,6 +140,13 @@ def _known_settings(data: dict[str, Any]) -> dict[str, Any]:
         elif key in DEFAULT_SETTINGS:
             known[key] = value
     return known
+
+
+def _migrate_settings(settings: dict[str, Any]) -> dict[str, Any]:
+    ui = settings.get("ui")
+    if isinstance(ui, dict) and ui.get("global_hotkey") in LEGACY_GLOBAL_HOTKEYS:
+        ui["global_hotkey"] = DEFAULT_GLOBAL_HOTKEY
+    return settings
 
 
 def apply_performance_profile(settings: dict[str, Any], profile_name: str) -> dict[str, Any]:
@@ -178,7 +186,7 @@ def load_settings() -> dict[str, Any]:
     if not isinstance(data, dict):
         return deepcopy(DEFAULT_SETTINGS)
 
-    merged = _deep_merge(DEFAULT_SETTINGS, _known_settings(data))
+    merged = _migrate_settings(_deep_merge(DEFAULT_SETTINGS, _known_settings(data)))
     if "performance" not in data:
         merged = apply_performance_profile(merged, "lightweight")
     return merged
@@ -186,7 +194,7 @@ def load_settings() -> dict[str, Any]:
 
 def save_settings(settings: dict[str, Any]) -> dict[str, Any]:
     APP_DIR.mkdir(parents=True, exist_ok=True)
-    merged = _deep_merge(DEFAULT_SETTINGS, _known_settings(settings))
+    merged = _migrate_settings(_deep_merge(DEFAULT_SETTINGS, _known_settings(settings)))
     SETTINGS_PATH.write_text(
         json.dumps(merged, ensure_ascii=False, indent=2),
         encoding="utf-8",

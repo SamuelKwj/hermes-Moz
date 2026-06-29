@@ -328,7 +328,6 @@ body.edge-docked canvas#viz {
   0%, 100% { transform: scale(0.96); opacity: 0.78; }
   50% { transform: scale(1.04); opacity: 1; }
 }
-body.edge-docked.hover-listening .viz-container,
 body.edge-docked.state-listening .viz-container {
   border-color: rgba(46,204,113,0.62);
   box-shadow: 0 0 24px rgba(46,204,113,0.28), 0 10px 28px rgba(0,0,0,0.38);
@@ -619,6 +618,13 @@ input[type="checkbox"] { width: 16px; height: 16px; }
     <span class="dot" id="statusDot"></span>
     <span>语音助手</span>
     <div class="header-actions">
+      <button class="icon-btn" id="dockBtn" title="贴边收起">
+        <svg viewBox="0 0 24 24">
+          <path d="M4 12h12"></path>
+          <path d="m12 8 4 4-4 4"></path>
+          <path d="M20 5v14"></path>
+        </svg>
+      </button>
       <button class="icon-btn" id="settingsBtn" title="设置">
         <svg viewBox="0 0 24 24">
           <circle cx="12" cy="12" r="3"></circle>
@@ -722,7 +728,6 @@ input[type="checkbox"] { width: 16px; height: 16px; }
       <label class="field row">全局快捷键<input id="globalHotkeyEnabled" type="checkbox"></label>
       <label class="field">快捷键<input id="globalHotkey" type="text" readonly></label>
       <label class="field row">贴边悬浮<input id="edgeDockEnabled" type="checkbox"></label>
-      <label class="field row">悬停展开时监听<input id="edgeHoverListen" type="checkbox"></label>
       <label class="field row">启动后隐藏<input id="startMinimized" type="checkbox"></label>
     </div>
 
@@ -769,8 +774,6 @@ var handsFreeMode = false;
 var lastHandsFreeSent = null;
 var recordingSource = null;
 var globalHotkeyWasHandsFree = false;
-var hoverListeningActive = false;
-var hoverStopPending = false;
 var textInputComposing = false;
 
 ws.onopen = () => {
@@ -963,9 +966,8 @@ function renderSettings() {
   $("wakeReply").value = ui.wake_reply || "我在，大王请说。";
   $("alwaysOnTop").checked = !!ui.always_on_top;
   $("globalHotkeyEnabled").checked = ui.global_hotkey_enabled !== false;
-  $("globalHotkey").value = ui.global_hotkey || "Ctrl+Alt+Space";
+  $("globalHotkey").value = ui.global_hotkey || "Ctrl+Alt+Z";
   $("edgeDockEnabled").checked = !!ui.edge_dock_enabled;
-  $("edgeHoverListen").checked = !!ui.edge_hover_listen;
   $("startMinimized").checked = !!ui.start_minimized;
 }
 
@@ -1193,24 +1195,20 @@ function readSettingsForm(applyProfile) {
       wake_reply: $("wakeReply").value.trim() || "我在，大王请说。",
       always_on_top: $("alwaysOnTop").checked,
       global_hotkey_enabled: $("globalHotkeyEnabled").checked,
-      global_hotkey: $("globalHotkey").value || "Ctrl+Alt+Space",
+      global_hotkey: $("globalHotkey").value || "Ctrl+Alt+Z",
       edge_dock_enabled: $("edgeDockEnabled").checked,
-      edge_hover_listen: $("edgeHoverListen").checked,
       start_minimized: $("startMinimized").checked
     }
   };
 }
 
-function syncHandsFreeMode(enabled, options) {
-  options = options || {};
+function syncHandsFreeMode(enabled) {
   handsFreeMode = !!enabled;
-  var forceSend = !!options.force || !!options.submitActive;
-  if (!forceSend && lastHandsFreeSent === handsFreeMode) return;
+  if (lastHandsFreeSent === handsFreeMode) return;
   if (ws.readyState === WebSocket.OPEN) {
     ws.send(JSON.stringify({
       cmd: "set_hands_free",
-      enabled: handsFreeMode,
-      submit_active: !!options.submitActive
+      enabled: handsFreeMode
     }));
     lastHandsFreeSent = handsFreeMode;
   }
@@ -1271,10 +1269,6 @@ function completeSetup() {
 
 function setState(s) {
   state = s;
-  if (hoverStopPending && s !== "recording") {
-    hoverStopPending = false;
-    syncHandsFreeMode(false);
-  }
   document.body.classList.remove("state-idle", "state-recording", "state-processing", "state-listening");
   document.body.classList.add("state-" + s);
   const btn = document.getElementById("micBtn");
@@ -1450,7 +1444,7 @@ window.hermesGlobalHotkeyUp = function() {
     globalHotkeyWasHandsFree = false;
     window.setTimeout(function() {
       var persistentHandsFree = !!(settingsData && settingsData.ui && settingsData.ui.hands_free);
-      if (state !== "recording" && (persistentHandsFree || hoverListeningActive)) {
+      if (state !== "recording" && persistentHandsFree) {
         syncHandsFreeMode(true);
       }
     }, 650);
@@ -1462,28 +1456,6 @@ window.hermesSetDocked = function(enabled) {
   if (enabled) closeSettings();
 };
 
-window.hermesSetHoverListening = function(enabled) {
-  enabled = !!enabled;
-  if (hoverListeningActive === enabled) return;
-  hoverListeningActive = enabled;
-  document.body.classList.toggle("hover-listening", enabled);
-  if (enabled) {
-    if (state !== "recording") syncHandsFreeMode(true);
-  } else {
-    var persistentHandsFree = !!(settingsData && settingsData.ui && settingsData.ui.hands_free);
-    if (persistentHandsFree) {
-      hoverStopPending = false;
-      return;
-    }
-    if (state === "recording" && recordingSource !== "global" && recordingSource !== "keyboard" && recordingSource !== "mouse") {
-      hoverStopPending = false;
-      syncHandsFreeMode(false, { submitActive: true, force: true });
-    } else {
-      hoverStopPending = false;
-      syncHandsFreeMode(false);
-    }
-  }
-};
 document.getElementById("viz").addEventListener("dblclick", async function() {
   if (!document.body.classList.contains("edge-docked")) return;
   try {
@@ -1509,6 +1481,22 @@ document.getElementById("closeBtn").addEventListener("click", async () => {
   }
 });
 $("settingsBtn").addEventListener("click", openSettings);
+$("dockBtn").addEventListener("click", async function() {
+  if (!(settingsData && settingsData.ui && settingsData.ui.edge_dock_enabled)) {
+    setStatus("请先在设置里开启贴边悬浮");
+    return;
+  }
+  try {
+    if (window.pywebview && window.pywebview.api && window.pywebview.api.dock_window) {
+      const result = await window.pywebview.api.dock_window();
+      if (!result || result.ok) return;
+      throw new Error(result.message || "贴边失败");
+    }
+  } catch (error) {
+    console.error(error);
+    setStatus("贴边失败: " + (error.message || error));
+  }
+});
 $("profileLightweight").addEventListener("click", function() { selectPerformanceProfile("lightweight"); });
 $("profileExtremeGpu").addEventListener("click", function() { selectPerformanceProfile("extreme_gpu"); });
 $("advancedToggle").addEventListener("click", function() {
