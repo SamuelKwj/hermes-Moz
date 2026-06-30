@@ -103,6 +103,23 @@ class ReleaseContractsTest(unittest.TestCase):
         self.assertIn("Code signing", evidence_text)
         self.assertIn("release_gate.ps1", packaging_text)
 
+    def test_release_signing_script_signs_and_verifies_artifacts(self):
+        sign_path = ROOT / "scripts" / "sign_release.ps1"
+        packaging_text = (ROOT / "docs" / "packaging.md").read_text(encoding="utf-8")
+        status_text = (ROOT / "docs" / "productization_status.md").read_text(encoding="utf-8")
+
+        self.assertTrue(sign_path.exists(), "release signing script should exist")
+        sign_text = sign_path.read_text(encoding="utf-8")
+        self.assertIn("signtool", sign_text.lower())
+        self.assertIn("HermesVoice.exe", sign_text)
+        self.assertIn("HermesVoiceSetup.exe", sign_text)
+        self.assertIn("TimestampUrl", sign_text)
+        self.assertIn("PfxPath", sign_text)
+        self.assertIn("CertificateThumbprint", sign_text)
+        self.assertIn("Get-AuthenticodeSignature", sign_text)
+        self.assertIn("sign_release.ps1", packaging_text)
+        self.assertIn("sign_release.ps1", status_text)
+
 
 if __name__ == "__main__":
     unittest.main()

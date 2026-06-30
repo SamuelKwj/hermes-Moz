@@ -120,3 +120,40 @@ For a public-sale decision, require signed artifacts and external evidence:
 ```
 
 The evidence JSON should contain boolean fields for `clean_windows`, `webview2`, `microphone`, `license_compliance`, `model_terms`, and `privacy_review`. Use `docs\release_evidence_template.md` as the human checklist for collecting that evidence.
+
+## Code Signing
+
+After building the portable app and installer, sign both artifacts with either a PFX file or a certificate already installed in the Windows certificate store:
+
+```powershell
+.\scripts\sign_release.ps1 -PfxPath C:\path\to\certificate.pfx -PfxPassword "<password>"
+```
+
+or:
+
+```powershell
+.\scripts\sign_release.ps1 -CertificateThumbprint "<thumbprint>"
+```
+
+The script uses `signtool.exe`, applies SHA-256 signing with a timestamp URL, and verifies the resulting Authenticode signatures for:
+
+```text
+dist\HermesVoice\HermesVoice.exe
+dist\installer\HermesVoiceSetup.exe
+```
+
+Use a trusted code signing certificate for a public release. A self-signed certificate is only useful for testing the mechanics and should not be counted as sale-ready signing evidence.
+
+To verify the current artifacts without signing:
+
+```powershell
+.\scripts\sign_release.ps1 -VerifyOnly
+```
+
+This command should fail with `NotSigned` until a real certificate has been applied to both artifacts.
+
+After signing, run:
+
+```powershell
+.\scripts\release_gate.ps1 -RequireSigned
+```

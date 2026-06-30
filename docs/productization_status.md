@@ -14,6 +14,7 @@
 - Package smoke script for portable exe and installer install/run/uninstall checks.
 - Public release gate script for automated checks, signature status, and external evidence tracking.
 - Release evidence template for clean-machine, microphone, license, model/service, privacy, and signing review.
+- Code signing script for `dist\HermesVoice\HermesVoice.exe` and `dist\installer\HermesVoiceSetup.exe`.
 - `THIRD_PARTY_NOTICES.md` included in packaged artifacts.
 - PyInstaller one-folder spec and build script.
 - Inno Setup installer script and build script.
@@ -65,6 +66,9 @@
   - Portable and installer package smoke passed.
   - Artifacts are currently unsigned: portable `NotSigned`, installer `NotSigned`.
   - External public-sale evidence is still missing for clean Windows, WebView2, microphone, license compliance, model/service terms, and privacy review.
+- 2026-06-30: `.\scripts\sign_release.ps1 -VerifyOnly`
+  - Signing verification correctly blocks the current unsigned artifacts.
+  - Current status: `dist\HermesVoice\HermesVoice.exe` is `NotSigned`; the installer also needs a trusted code signing certificate before public sale.
 
 ## Not Yet Verified
 
@@ -74,7 +78,7 @@
 - Offline model pre-seeding.
 - Installer install/uninstall on a separate machine or VM with no previous Hermes Voice installation record.
 - Public-sale license compliance for bundled FFmpeg build and installer toolchain output. As of 2026-06-29, FFmpeg's legal page and Gyan's builds page need review before shipping the bundled binaries commercially; Inno Setup's license permits commercial use, while the project requests commercial users purchase a license.
-- Code signing and reputation behavior on a clean Windows target.
+- Trusted code signing certificate application and reputation behavior on a clean Windows target.
 - End-to-end voice interaction after install with a real microphone and speaker device.
 
 ## Notes
@@ -98,5 +102,6 @@ Rebuild commands:
 .\scripts\build_pyinstaller.ps1
 .\scripts\build_installer.ps1
 .\scripts\package_smoke.ps1 -Installer -UninstallIfIsolated
+.\scripts\sign_release.ps1 -VerifyOnly
 .\scripts\release_gate.ps1
 ```
