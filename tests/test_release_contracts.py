@@ -46,6 +46,38 @@ class ReleaseContractsTest(unittest.TestCase):
         self.assertIn("Copy-Item", prepare_text)
         self.assertIn("Required", prepare_text)
 
+    def test_package_smoke_script_verifies_portable_and_installer_artifacts(self):
+        script_path = ROOT / "scripts" / "package_smoke.ps1"
+
+        self.assertTrue(script_path.exists(), "package smoke script should exist")
+        script_text = script_path.read_text(encoding="utf-8")
+        self.assertIn("HermesVoice.exe", script_text)
+        self.assertIn("HermesVoiceSetup.exe", script_text)
+        self.assertIn("/health", script_text)
+        self.assertIn("/api/status", script_text)
+        self.assertIn("ffmpeg", script_text)
+        self.assertIn("ffplay", script_text)
+        self.assertIn("THIRD_PARTY_NOTICES.md", script_text)
+        self.assertIn("UninstallString", script_text)
+        self.assertIn("/LOG=", script_text)
+        self.assertIn("Installer did not update", script_text)
+        self.assertIn("sourceExeTimestamp", script_text)
+        self.assertIn("FBC0C2F1-D8D8-4D70-8F07-4E23D2B31759", script_text)
+        self.assertIn("Hermes Voice*", script_text)
+
+    def test_third_party_notices_are_packaged(self):
+        notice_path = ROOT / "THIRD_PARTY_NOTICES.md"
+        spec_text = (ROOT / "packaging" / "hermes_voice.spec").read_text(encoding="utf-8")
+        packaging_text = (ROOT / "docs" / "packaging.md").read_text(encoding="utf-8")
+
+        self.assertTrue(notice_path.exists(), "third-party notices should exist")
+        notice_text = notice_path.read_text(encoding="utf-8")
+        self.assertIn("FFmpeg", notice_text)
+        self.assertIn("Gyan", notice_text)
+        self.assertIn("Inno Setup", notice_text)
+        self.assertIn("THIRD_PARTY_NOTICES.md", spec_text)
+        self.assertIn("THIRD_PARTY_NOTICES.md", packaging_text)
+
 
 if __name__ == "__main__":
     unittest.main()

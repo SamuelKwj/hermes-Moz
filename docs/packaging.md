@@ -59,6 +59,8 @@ The PyInstaller build script runs the same preparation step before packaging, an
 
 Before public sale, verify the license terms of the exact FFmpeg build being bundled and include any required notices.
 
+Release packages include `THIRD_PARTY_NOTICES.md`. Keep that file updated whenever adding a bundled binary, a model, or an installer/runtime dependency with distribution obligations.
+
 References checked on 2026-06-29:
 
 - FFmpeg legal page: https://www.ffmpeg.org/legal.html
@@ -79,3 +81,26 @@ Output:
 ```text
 dist\installer\HermesVoiceSetup.exe
 ```
+
+## Release Smoke
+
+Run source/runtime checks:
+
+```powershell
+.\scripts\release_smoke.ps1
+```
+
+Rebuild portable and installer after the same checks:
+
+```powershell
+.\scripts\release_smoke.ps1 -Build
+```
+
+Smoke-test built artifacts:
+
+```powershell
+.\scripts\package_smoke.ps1
+.\scripts\package_smoke.ps1 -Installer -UninstallIfIsolated
+```
+
+The package smoke script starts the portable exe and, when requested, performs an isolated installer run under `work\install-smoke-*`, verifies `/health`, `/api/status`, bundled `ffmpeg`/`ffplay`, and `THIRD_PARTY_NOTICES.md`, then can uninstall the isolated install.

@@ -9,6 +9,7 @@ ROOT = Path(SPECPATH).parent
 datas = [
     (str(ROOT / "frontend"), "frontend"),
     (str(ROOT / "assets"), "assets"),
+    (str(ROOT / "THIRD_PARTY_NOTICES.md"), "."),
 ]
 
 if (ROOT / "bin").exists():

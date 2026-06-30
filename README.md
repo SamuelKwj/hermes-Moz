@@ -78,6 +78,13 @@ Inno Setup 安装器：
 dist\installer\HermesVoiceSetup.exe
 ```
 
+发布烟测：
+
+```powershell
+.\scripts\release_smoke.ps1
+.\scripts\package_smoke.ps1
+```
+
 ## 配置
 
 用户设置保存在：
