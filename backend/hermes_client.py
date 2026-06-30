@@ -11,6 +11,84 @@ logger = logging.getLogger(__name__)
 HERMES_BASE = os.getenv("HERMES_GATEWAY_URL", "http://127.0.0.1:8642")
 API_KEY = os.getenv("API_SERVER_KEY", "bridge-secret-key")
 
+# Tool definitions passed to Hermes API so the model can execute actions
+# (terminal, file operations, web search) instead of saying "I don't have tools".
+# Hermes API server handles the full tool-calling loop internally.
+HERMES_TOOLS = [
+    {
+        "type": "function",
+        "function": {
+            "name": "terminal",
+            "description": "在电脑上执行命令行操作，如创建文件夹、打开程序、管理系统文件等",
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "command": {
+                        "type": "string",
+                        "description": "要执行的命令"
+                    }
+                },
+                "required": ["command"]
+            }
+        }
+    },
+    {
+        "type": "function",
+        "function": {
+            "name": "read_file",
+            "description": "读取电脑上的文件内容",
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "path": {
+                        "type": "string",
+                        "description": "文件路径"
+                    }
+                },
+                "required": ["path"]
+            }
+        }
+    },
+    {
+        "type": "function",
+        "function": {
+            "name": "write_file",
+            "description": "创建或覆盖写入文件",
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "path": {
+                        "type": "string",
+                        "description": "文件路径"
+                    },
+                    "content": {
+                        "type": "string",
+                        "description": "文件内容"
+                    }
+                },
+                "required": ["path", "content"]
+            }
+        }
+    },
+    {
+        "type": "function",
+        "function": {
+            "name": "web_search",
+            "description": "在网上搜索信息",
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "query": {
+                        "type": "string",
+                        "description": "搜索关键词"
+                    }
+                },
+                "required": ["query"]
+            }
+        }
+    }
+]
+
 
 class HermesClient:
     def __init__(self):
@@ -31,6 +109,8 @@ class HermesClient:
                     "messages": messages,
                     "max_tokens": max_tokens,
                     "temperature": temperature,
+                    "tools": HERMES_TOOLS,
+                    "tool_choice": "auto",
                 },
             )
             resp.raise_for_status()
@@ -81,6 +161,8 @@ class HermesClient:
                     "max_tokens": max_tokens,
                     "temperature": temperature,
                     "stream": True,
+                    "tools": HERMES_TOOLS,
+                    "tool_choice": "auto",
                 },
             ) as resp:
                 resp.raise_for_status()
