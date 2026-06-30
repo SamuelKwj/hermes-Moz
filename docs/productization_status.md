@@ -12,6 +12,8 @@
 - Release bin preparation script that copies `ffmpeg.exe` and `ffplay.exe` from PATH into ignored local `bin\`.
 - Release smoke script for compile, frontend syntax, dependency imports, unit tests, backend readiness, and optional builds.
 - Package smoke script for portable exe and installer install/run/uninstall checks.
+- Public release gate script for automated checks, signature status, and external evidence tracking.
+- Release evidence template for clean-machine, microphone, license, model/service, privacy, and signing review.
 - `THIRD_PARTY_NOTICES.md` included in packaged artifacts.
 - PyInstaller one-folder spec and build script.
 - Inno Setup installer script and build script.
@@ -56,6 +58,13 @@
   - Installed exe launched on a temporary port.
   - Both portable and installed app reported `/health` ok, `stt_ready=true`, `tts_ready=true`, bundled `ffmpeg=true`, bundled `ffplay=true`.
   - Isolated installer smoke install was silently uninstalled after verification.
+- 2026-06-30: `.\scripts\release_gate.ps1`
+  - `internal_release_ready=true`.
+  - `public_sale_ready=false`.
+  - Automated source/runtime smoke passed.
+  - Portable and installer package smoke passed.
+  - Artifacts are currently unsigned: portable `NotSigned`, installer `NotSigned`.
+  - External public-sale evidence is still missing for clean Windows, WebView2, microphone, license compliance, model/service terms, and privacy review.
 
 ## Not Yet Verified
 
@@ -89,4 +98,5 @@ Rebuild commands:
 .\scripts\build_pyinstaller.ps1
 .\scripts\build_installer.ps1
 .\scripts\package_smoke.ps1 -Installer -UninstallIfIsolated
+.\scripts\release_gate.ps1
 ```

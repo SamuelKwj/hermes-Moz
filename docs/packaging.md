@@ -104,3 +104,19 @@ Smoke-test built artifacts:
 ```
 
 The package smoke script starts the portable exe and, when requested, performs an isolated installer run under `work\install-smoke-*`, verifies `/health`, `/api/status`, bundled `ffmpeg`/`ffplay`, and `THIRD_PARTY_NOTICES.md`, then can uninstall the isolated install.
+
+## Public Release Gate
+
+Run the gate in reporting mode:
+
+```powershell
+.\scripts\release_gate.ps1
+```
+
+For a public-sale decision, require signed artifacts and external evidence:
+
+```powershell
+.\scripts\release_gate.ps1 -RequireSigned -RequireExternalEvidence -EvidencePath .\docs\releases\<candidate>-evidence.json
+```
+
+The evidence JSON should contain boolean fields for `clean_windows`, `webview2`, `microphone`, `license_compliance`, `model_terms`, and `privacy_review`. Use `docs\release_evidence_template.md` as the human checklist for collecting that evidence.

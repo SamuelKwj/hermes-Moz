@@ -78,6 +78,31 @@ class ReleaseContractsTest(unittest.TestCase):
         self.assertIn("THIRD_PARTY_NOTICES.md", spec_text)
         self.assertIn("THIRD_PARTY_NOTICES.md", packaging_text)
 
+    def test_public_release_gate_tracks_external_sale_requirements(self):
+        gate_path = ROOT / "scripts" / "release_gate.ps1"
+        evidence_path = ROOT / "docs" / "release_evidence_template.md"
+        packaging_text = (ROOT / "docs" / "packaging.md").read_text(encoding="utf-8")
+
+        self.assertTrue(gate_path.exists(), "public release gate script should exist")
+        gate_text = gate_path.read_text(encoding="utf-8")
+        self.assertIn("Get-AuthenticodeSignature", gate_text)
+        self.assertIn("release_smoke.ps1", gate_text)
+        self.assertIn("package_smoke.ps1", gate_text)
+        self.assertIn("RequireSigned", gate_text)
+        self.assertIn("RequireExternalEvidence", gate_text)
+        self.assertIn("license_compliance", gate_text)
+        self.assertIn("clean_windows", gate_text)
+        self.assertIn("microphone", gate_text)
+        self.assertIn("webview2", gate_text)
+
+        self.assertTrue(evidence_path.exists(), "release evidence template should exist")
+        evidence_text = evidence_path.read_text(encoding="utf-8")
+        self.assertIn("Clean Windows", evidence_text)
+        self.assertIn("Microphone", evidence_text)
+        self.assertIn("License", evidence_text)
+        self.assertIn("Code signing", evidence_text)
+        self.assertIn("release_gate.ps1", packaging_text)
+
 
 if __name__ == "__main__":
     unittest.main()
