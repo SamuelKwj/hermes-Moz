@@ -19,6 +19,7 @@ from stt_engine import transcribe
 from tts_engine import synthesize
 from hermes_client import HermesClient
 from settings import load_settings
+from subprocess_utils import hidden_window_kwargs
 
 logger = logging.getLogger(__name__)
 
@@ -378,6 +379,7 @@ def _decode_audio_file(path: str, sample_rate: int) -> np.ndarray:
         ],
         capture_output=True,
         check=True,
+        **hidden_window_kwargs(),
     )
     return np.frombuffer(result.stdout, dtype=np.float32).copy()
 

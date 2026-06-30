@@ -6,6 +6,8 @@ import subprocess
 import tempfile
 from pathlib import Path
 
+from subprocess_utils import hidden_window_kwargs
+
 logger = logging.getLogger(__name__)
 
 VOICE = os.getenv("VOICE_TTS_VOICE", "zh-CN-XiaoxiaoNeural")
@@ -123,6 +125,7 @@ $s.Dispose()
             ],
             capture_output=True,
             check=True,
+            **hidden_window_kwargs(),
         )
         return wav_path
     finally:
