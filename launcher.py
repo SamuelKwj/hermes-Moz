@@ -72,6 +72,17 @@ class DesktopApi:
             _edge_dock_controller.dock_window()
         return {"ok": True}
 
+    def open_model_dir(self):
+        try:
+            model_dir = configure_model_cache()
+            if os.name == "nt":
+                os.startfile(str(model_dir))  # type: ignore[attr-defined]
+                return {"ok": True, "path": str(model_dir)}
+            return {"ok": False, "message": f"模型目录：{model_dir}", "path": str(model_dir)}
+        except Exception as exc:
+            logger.exception("Failed to open model directory.")
+            return {"ok": False, "message": str(exc)}
+
 
 class UvicornThread(threading.Thread):
     def __init__(self, host: str, port: int):

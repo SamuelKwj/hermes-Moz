@@ -472,6 +472,26 @@ body.edge-docked.state-processing .viz-container {
   border-color: rgba(243,156,18,0.5);
   background: rgba(243,156,18,0.12);
 }
+.model-cache-panel {
+  margin-top: 8px;
+  display: grid;
+  grid-template-columns: 1fr;
+  gap: 8px;
+}
+.model-cache-hint {
+  border: 1px solid rgba(255,255,255,0.08);
+  border-radius: 8px;
+  background: rgba(255,255,255,0.035);
+  padding: 9px 10px;
+  font-size: 11px;
+  color: var(--text-dim);
+  line-height: 1.4;
+  white-space: pre-line;
+  word-break: break-all;
+}
+.model-cache-panel .text-btn {
+  flex: none;
+}
 .advanced-toggle {
   width: 100%;
   min-height: 30px;
@@ -564,6 +584,10 @@ input[type="checkbox"] { width: 16px; height: 16px; }
   color: var(--text);
   cursor: pointer;
   font: inherit;
+}
+.text-btn:disabled {
+  cursor: default;
+  opacity: 0.72;
 }
 .text-btn.primary {
   border-color: rgba(108,92,231,0.6);
@@ -691,6 +715,10 @@ input[type="checkbox"] { width: 16px; height: 16px; }
         </button>
       </div>
       <div class="runtime-strip" id="runtimeProfileStatus">当前运行状态读取中...</div>
+      <div class="model-cache-panel">
+        <div class="model-cache-hint" id="modelCacheHint">模型目录读取中...</div>
+        <button class="text-btn" id="openModelDirBtn" type="button">打开模型目录</button>
+      </div>
       <button class="advanced-toggle" id="advancedToggle" type="button">高级参数</button>
       <div class="advanced-settings hidden" id="advancedSettings">
         <label class="field">STT 模型
@@ -941,6 +969,7 @@ function renderSettings() {
   $("performanceProfile").value = performance.profile || "lightweight";
   renderPerformanceCards();
   renderRuntimeProfileStatus();
+  renderModelCacheHint();
   fillDeviceSelect($("inputDevice"), devicesData.inputs, audio.input_device);
   fillDeviceSelect($("outputDevice"), devicesData.outputs, audio.output_device);
   $("inputGain").value = audio.input_gain || 1;
@@ -983,6 +1012,29 @@ function hasNvidiaCuda() {
 function formatSttLine(stt) {
   stt = stt || {};
   return (stt.model || "-") + " / " + (stt.device || "-") + " / " + (stt.compute_type || "-");
+}
+
+function modelCachePath() {
+  return (statusData && statusData.runtime && statusData.runtime.model_cache_dir) || "%LOCALAPPDATA%\\HermesVoiceWidget\\models";
+}
+
+function hasUndownloadedSttModels() {
+  var models = (statusData && statusData.stt_models) || [];
+  for (var i = 0; i < models.length; i++) {
+    if (!models[i].downloaded) return true;
+  }
+  return false;
+}
+
+function renderModelCacheHint() {
+  var hint = $("modelCacheHint");
+  if (!hint) return;
+  var path = modelCachePath();
+  if (hasUndownloadedSttModels()) {
+    hint.textContent = "模型未下载时，首次使用会自动下载到：\n" + path + "\n目录里有“模型手动下载说明.txt”，也可以手动放入模型。";
+  } else {
+    hint.textContent = "模型目录：\n" + path + "\n目录里有“模型手动下载说明.txt”。";
+  }
 }
 
 function renderPerformanceCards() {
@@ -1214,7 +1266,16 @@ function syncHandsFreeMode(enabled) {
   }
 }
 
-function refreshStatus() {
+function refreshStatus(options) {
+  options = options || {};
+  var feedback = !!options.feedback;
+  var button = options.buttonId ? $(options.buttonId) : null;
+  var originalButtonText = button ? button.textContent : "";
+  if (feedback) setStatus("正在检测...");
+  if (button) {
+    button.disabled = true;
+    button.textContent = "正在检测...";
+  }
   return Promise.all([
     apiGet("/api/status"),
     apiGet("/api/devices").catch(function() { return { inputs: [], outputs: [] }; })
@@ -1230,8 +1291,17 @@ function refreshStatus() {
     if (settingsData && settingsData.setup && !settingsData.setup.first_run_complete) {
       $("setupModal").classList.remove("hidden");
     }
+    if (feedback) setStatus("检测完成");
+    if (button) button.textContent = "检测完成";
   }).catch(function(error) {
     setStatus("诊断失败: " + error.message);
+    if (button) button.textContent = "检测失败";
+  }).finally(function() {
+    if (!button) return;
+    window.setTimeout(function() {
+      button.disabled = false;
+      button.textContent = originalButtonText;
+    }, 900);
   });
 }
 
@@ -1299,6 +1369,24 @@ function setState(s) {
 
 function setStatus(text) {
   document.getElementById("status").textContent = text;
+}
+
+async function openModelDir() {
+  var path = modelCachePath();
+  try {
+    if (window.pywebview && window.pywebview.api && window.pywebview.api.open_model_dir) {
+      var result = await window.pywebview.api.open_model_dir();
+      if (!result || result.ok) {
+        setStatus("已打开模型目录");
+        return;
+      }
+      throw new Error(result.message || "打开模型目录失败");
+    }
+    setStatus("模型目录：" + path);
+  } catch (error) {
+    console.error(error);
+    setStatus("打开模型目录失败: " + (error.message || error));
+  }
 }
 
 function addMessage(role, text) {
@@ -1503,9 +1591,14 @@ $("advancedToggle").addEventListener("click", function() {
   $("advancedSettings").classList.toggle("hidden");
 });
 $("closeSettingsBtn").addEventListener("click", closeSettings);
-$("refreshStatusBtn").addEventListener("click", refreshStatus);
+$("refreshStatusBtn").addEventListener("click", function() {
+  refreshStatus({ feedback: true, buttonId: "refreshStatusBtn" });
+});
 $("saveSettingsBtn").addEventListener("click", function() { saveSettings(true, false); });
-$("setupRefreshBtn").addEventListener("click", refreshStatus);
+$("setupRefreshBtn").addEventListener("click", function() {
+  refreshStatus({ feedback: true, buttonId: "setupRefreshBtn" });
+});
+$("openModelDirBtn").addEventListener("click", openModelDir);
 $("completeSetupBtn").addEventListener("click", completeSetup);
 $("skipSetupBtn").addEventListener("click", completeSetup);
 refreshStatus();

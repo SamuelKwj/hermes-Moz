@@ -78,6 +78,16 @@ class ReleaseContractsTest(unittest.TestCase):
         self.assertIn("THIRD_PARTY_NOTICES.md", spec_text)
         self.assertIn("THIRD_PARTY_NOTICES.md", packaging_text)
 
+    def test_settings_ui_exposes_model_cache_help_and_refresh_feedback(self):
+        frontend_text = (ROOT / "frontend" / "index.html").read_text(encoding="utf-8")
+        launcher_text = (ROOT / "launcher.py").read_text(encoding="utf-8")
+
+        self.assertIn("openModelDirBtn", frontend_text)
+        self.assertIn("模型手动下载说明.txt", frontend_text)
+        self.assertIn("正在检测...", frontend_text)
+        self.assertIn("检测完成", frontend_text)
+        self.assertIn("def open_model_dir", launcher_text)
+
     def test_public_release_gate_tracks_external_sale_requirements(self):
         gate_path = ROOT / "scripts" / "release_gate.ps1"
         evidence_path = ROOT / "docs" / "release_evidence_template.md"

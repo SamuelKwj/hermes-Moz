@@ -9,6 +9,7 @@ from pathlib import Path
 
 
 APP_NAME = "HermesVoiceWidget"
+MODEL_DOWNLOAD_GUIDE_FILENAME = "模型手动下载说明.txt"
 
 
 def is_frozen() -> bool:
@@ -48,6 +49,54 @@ def get_model_cache_dir() -> Path:
     return get_app_dir() / "models"
 
 
+def model_download_guide_path() -> Path:
+    return get_model_cache_dir() / MODEL_DOWNLOAD_GUIDE_FILENAME
+
+
+def _model_download_guide_text(cache_dir: Path) -> str:
+    return f"""Hermes Voice 模型手动下载说明
+
+模型目录：
+{cache_dir}
+
+自动下载：
+首次使用未下载的 STT 模型时，软件会自动下载到上面的 models 目录。
+
+手动放置：
+如果要离线预置模型，请下载 Systran/faster-whisper 对应模型，并把完整文件夹放到：
+{cache_dir}\\faster-whisper-tiny
+{cache_dir}\\faster-whisper-base
+{cache_dir}\\faster-whisper-small
+{cache_dir}\\faster-whisper-medium
+{cache_dir}\\faster-whisper-large-v3
+
+每个模型文件夹至少需要包含：
+model.bin
+config.json
+tokenizer.json
+vocabulary.json 或 vocabulary.txt
+
+自动下载缓存通常位于：
+{cache_dir}\\huggingface\\hub
+
+常用 Hugging Face 模型名：
+Systran/faster-whisper-tiny
+Systran/faster-whisper-base
+Systran/faster-whisper-small
+Systran/faster-whisper-medium
+Systran/faster-whisper-large-v3
+"""
+
+
+def ensure_model_download_guide() -> Path:
+    cache_dir = get_model_cache_dir()
+    cache_dir.mkdir(parents=True, exist_ok=True)
+    guide_path = cache_dir / MODEL_DOWNLOAD_GUIDE_FILENAME
+    if not guide_path.exists():
+        guide_path.write_text(_model_download_guide_text(cache_dir), encoding="utf-8")
+    return guide_path
+
+
 def get_frontend_index() -> Path:
     return resource_path("frontend", "index.html")
 
@@ -60,11 +109,13 @@ def ensure_runtime_dirs() -> None:
     get_app_dir().mkdir(parents=True, exist_ok=True)
     get_logs_dir().mkdir(parents=True, exist_ok=True)
     get_model_cache_dir().mkdir(parents=True, exist_ok=True)
+    ensure_model_download_guide()
 
 
 def configure_model_cache() -> Path:
     cache_dir = get_model_cache_dir()
     cache_dir.mkdir(parents=True, exist_ok=True)
+    ensure_model_download_guide()
     os.environ.setdefault("HF_HOME", str(cache_dir / "huggingface"))
     os.environ.setdefault("HUGGINGFACE_HUB_CACHE", str(cache_dir / "huggingface" / "hub"))
     os.environ.setdefault("XDG_CACHE_HOME", str(cache_dir / "xdg"))
