@@ -3,13 +3,17 @@ import asyncio
 import json
 import logging
 import os
+from typing import Any
 
 import httpx
 
 logger = logging.getLogger(__name__)
 
-HERMES_BASE = os.getenv("HERMES_GATEWAY_URL", "http://127.0.0.1:8642")
-API_KEY = os.getenv("API_SERVER_KEY", "bridge-secret-key")
+DEFAULT_HERMES_BASE = "http://127.0.0.1:8642"
+DEFAULT_API_KEY = "bridge-secret-key"
+DEFAULT_HERMES_MODEL = "hermes"
+HERMES_BASE = os.getenv("HERMES_GATEWAY_URL", DEFAULT_HERMES_BASE)
+API_KEY = os.getenv("API_SERVER_KEY", DEFAULT_API_KEY)
 
 # Tool definitions passed to Hermes API so the model can execute actions
 # (terminal, file operations, web search) instead of saying "I don't have tools".
@@ -90,20 +94,75 @@ HERMES_TOOLS = [
 ]
 
 
+def parse_model_ids(payload: Any) -> list[str]:
+    """Extract OpenAI-compatible model IDs from /v1/models responses."""
+    if not isinstance(payload, dict):
+        return []
+
+    data = payload.get("data")
+    if not isinstance(data, list):
+        return []
+
+    model_ids: list[str] = []
+    for item in data:
+        if isinstance(item, dict):
+            raw_id = item.get("id") or item.get("name") or item.get("model")
+        else:
+            raw_id = item
+        model_id = str(raw_id).strip() if raw_id else ""
+        if model_id and model_id not in model_ids:
+            model_ids.append(model_id)
+    return model_ids
+
+
+def choose_hermes_model(configured_model: str, available_models: list[str]) -> str:
+    configured = str(configured_model or "").strip() or DEFAULT_HERMES_MODEL
+    clean_models = [str(model).strip() for model in available_models if str(model).strip()]
+    if not clean_models or configured in clean_models:
+        return configured
+    return clean_models[0]
+
+
+def gateway_config() -> dict[str, Any]:
+    from settings import load_settings
+
+    hermes_settings = load_settings()["hermes"]
+    base_url = (
+        os.getenv("HERMES_GATEWAY_URL")
+        or str(hermes_settings.get("base_url") or DEFAULT_HERMES_BASE)
+    ).rstrip("/")
+    api_key = os.getenv("API_SERVER_KEY") or str(hermes_settings.get("api_key") or DEFAULT_API_KEY)
+    model = os.getenv("HERMES_MODEL") or str(hermes_settings.get("model") or DEFAULT_HERMES_MODEL)
+    max_tokens = int(hermes_settings.get("max_tokens", 300))
+    temperature = float(hermes_settings.get("temperature", 0.7))
+    return {
+        "base_url": base_url,
+        "api_key": api_key,
+        "model": model,
+        "max_tokens": max_tokens,
+        "temperature": temperature,
+    }
+
+
+def auth_headers(api_key: str) -> dict[str, str]:
+    return {"Authorization": f"Bearer {api_key}"}
+
+
 class HermesClient:
     def __init__(self):
         self.base_url = HERMES_BASE
-        self._client = httpx.AsyncClient(
-            timeout=120.0,
-            headers={"Authorization": f"Bearer {API_KEY}"},
-        )
+        self._client = httpx.AsyncClient(timeout=120.0)
 
     async def chat(self, message: str, history: list = None) -> str:
         """Send a single-turn or multi-turn message to Hermes gateway."""
-        messages, model, max_tokens, temperature = self._build_payload(message, history)
+        config = gateway_config()
+        self.base_url = config["base_url"]
+        messages, model, max_tokens, temperature = self._build_payload(message, history, config)
+        model = await self._select_model(model, config)
         try:
             resp = await self._client.post(
                 f"{self.base_url}/v1/chat/completions",
+                headers=auth_headers(str(config["api_key"])),
                 json={
                     "model": model,
                     "messages": messages,
@@ -118,19 +177,22 @@ class HermesClient:
             return data["choices"][0]["message"]["content"]
         except httpx.ConnectError:
             logger.warning("Hermes gateway not reachable at %s", self.base_url)
-            return "Hermes 网关没启动，请先启动它。"
+            return "未连接到 Hermes Gateway。请启动 Hermes Gateway，或在设置里检查地址和密钥。"
         except Exception:
             logger.exception("Hermes gateway call failed")
             return "抱歉，AI 后端出了点问题。"
 
-    def _build_payload(self, message: str, history: list = None) -> tuple[list, str, int, float]:
-        from settings import load_settings
-
+    def _build_payload(
+        self,
+        message: str,
+        history: list = None,
+        config: dict[str, Any] | None = None,
+    ) -> tuple[list, str, int, float]:
         history = history or []
-        hermes_settings = load_settings()["hermes"]
-        model = os.getenv("HERMES_MODEL", str(hermes_settings.get("model", "hermes")))
-        max_tokens = int(hermes_settings.get("max_tokens", 300))
-        temperature = float(hermes_settings.get("temperature", 0.7))
+        config = config or gateway_config()
+        model = str(config["model"])
+        max_tokens = int(config["max_tokens"])
+        temperature = float(config["temperature"])
         messages = [
             {
                 "role": "system",
@@ -148,13 +210,42 @@ class HermesClient:
         messages.append({"role": "user", "content": message})
         return messages, model, max_tokens, temperature
 
+    async def list_models(self, config: dict[str, Any] | None = None) -> list[str]:
+        config = config or gateway_config()
+        self.base_url = str(config["base_url"])
+        try:
+            resp = await self._client.get(
+                f"{self.base_url}/v1/models",
+                headers=auth_headers(str(config["api_key"])),
+            )
+            resp.raise_for_status()
+            return parse_model_ids(resp.json())
+        except Exception:
+            logger.debug("Hermes model list unavailable at %s", self.base_url, exc_info=True)
+            return []
+
+    async def _select_model(self, configured_model: str, config: dict[str, Any]) -> str:
+        available_models = await self.list_models(config)
+        selected = choose_hermes_model(configured_model, available_models)
+        if available_models and selected != configured_model:
+            logger.info(
+                "Hermes model %s unavailable; using %s from gateway.",
+                configured_model,
+                selected,
+            )
+        return selected
+
     async def chat_stream(self, message: str, history: list = None):
         """Yield content deltas from an OpenAI-compatible streaming endpoint."""
-        messages, model, max_tokens, temperature = self._build_payload(message, history)
+        config = gateway_config()
+        self.base_url = config["base_url"]
+        messages, model, max_tokens, temperature = self._build_payload(message, history, config)
+        model = await self._select_model(model, config)
         try:
             async with self._client.stream(
                 "POST",
                 f"{self.base_url}/v1/chat/completions",
+                headers=auth_headers(str(config["api_key"])),
                 json={
                     "model": model,
                     "messages": messages,
@@ -186,7 +277,7 @@ class HermesClient:
                         yield content
         except httpx.ConnectError:
             logger.warning("Hermes gateway not reachable at %s", self.base_url)
-            yield "Hermes 网关没启动，请先启动它。"
+            yield "未连接到 Hermes Gateway。请启动 Hermes Gateway，或在设置里检查地址和密钥。"
         except Exception:
             logger.exception("Hermes streaming failed; falling back to non-streaming chat.")
             yield await self.chat(message, history)

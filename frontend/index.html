@@ -472,6 +472,29 @@ body.edge-docked.state-processing .viz-container {
   border-color: rgba(243,156,18,0.5);
   background: rgba(243,156,18,0.12);
 }
+.install-issue-summary {
+  border: 1px solid rgba(243,156,18,0.45);
+  border-radius: 8px;
+  background: rgba(243,156,18,0.10);
+  padding: 9px 10px;
+  margin-bottom: 10px;
+  font-size: 11px;
+  line-height: 1.45;
+  color: var(--text);
+}
+.install-issue-summary.hidden { display: none; }
+.install-issue-summary-title {
+  font-size: 12px;
+  font-weight: 600;
+  margin-bottom: 5px;
+}
+.install-issue-summary ul {
+  margin: 0;
+  padding-left: 16px;
+}
+.install-issue-summary li + li {
+  margin-top: 4px;
+}
 .model-cache-panel {
   margin-top: 8px;
   display: grid;
@@ -542,7 +565,7 @@ body.edge-docked.state-processing .viz-container {
 .option-button.active .option-meta {
   color: var(--accent-glow);
 }
-select, input[type="text"], input[type="number"] {
+select, input[type="text"], input[type="password"], input[type="number"] {
   width: 100%;
   min-height: 32px;
   border-radius: 8px;
@@ -687,6 +710,7 @@ input[type="checkbox"] { width: 16px; height: 16px; }
 
     <div class="settings-group">
       <h2>诊断</h2>
+      <div class="install-issue-summary hidden" id="installIssueSummary"></div>
       <div class="check-list" id="diagList"></div>
     </div>
 
@@ -740,6 +764,7 @@ input[type="checkbox"] { width: 16px; height: 16px; }
         <label class="field">自然语音音色<input id="ttsVoice" type="text"></label>
         <label class="field">Windows 原生音色<input id="ttsNativeVoice" type="text"></label>
         <label class="field">Hermes 地址<input id="hermesBaseUrl" type="text"></label>
+        <label class="field">Hermes 密钥<input id="hermesApiKey" type="password" autocomplete="off"></label>
         <label class="field">Hermes 模型<input id="hermesModel" type="text"></label>
         <label class="field">最大回复 tokens<input id="hermesMaxTokens" type="number" min="64" max="4096" step="32"></label>
         <label class="field">温度<input id="hermesTemperature" type="number" min="0" max="2" step="0.1"></label>
@@ -773,6 +798,7 @@ input[type="checkbox"] { width: 16px; height: 16px; }
           <svg viewBox="0 0 24 24"><path d="m5 12 5 5L20 7"></path></svg>
         </button>
       </div>
+      <div class="install-issue-summary hidden" id="setupIssueSummary"></div>
       <div class="check-list" id="setupChecks"></div>
       <div class="actions">
         <button class="text-btn" id="setupRefreshBtn">重新检测</button>
@@ -904,14 +930,14 @@ function collectChecks() {
   return [
     checkItem("性能档位", true, profileLabel(profile)),
     checkItem("NVIDIA CUDA", !cudaRequested || !!accelerator.nvidia_cuda_available, accelerator.message || "未检测"),
-    checkItem("ffmpeg", deps.ffmpeg, deps.ffmpeg_path || "未检测到"),
-    checkItem("麦克风", devicesData.inputs.length > 0, devicesData.inputs.length + " 个输入设备"),
-    checkItem("扬声器", devicesData.outputs.length > 0, devicesData.outputs.length + " 个输出设备"),
-    checkItem("Hermes Gateway", hermes.reachable, hermes.base_url || "未配置"),
+    checkItem("ffmpeg / ffplay", deps.ffmpeg && deps.ffplay, formatFfmpegLine(deps)),
+    checkItem("麦克风", devicesData.inputs.length > 0, formatInputDeviceLine()),
+    checkItem("扬声器", devicesData.outputs.length > 0, formatOutputDeviceLine()),
+    checkItem("Hermes Gateway", hermes.reachable, formatHermesLine(hermes)),
     checkItem(
       "STT",
       sttOk,
-      stt.model ? stt.model + " / " + stt.device + " / " + stt.compute_type : "模型预热中或失败"
+      formatSttCheckLine(stt)
     ),
     checkItem("TTS", statusData && statusData.tts_ready, statusData && statusData.tts_ready ? "语音已就绪" : "模型预热中或失败")
   ];
@@ -940,6 +966,52 @@ function renderChecks(containerId) {
     row.appendChild(text);
     container.appendChild(row);
   });
+}
+
+function collectInstallIssues() {
+  var deps = (statusData && statusData.dependencies) || {};
+  var hermes = (statusData && statusData.hermes) || {};
+  var stt = (statusData && statusData.stt) || {};
+  var issues = [];
+  if (!hermes.reachable) {
+    issues.push("Hermes Gateway：安装或启动 Hermes Gateway，并检查地址和密钥。");
+  }
+  if (!deps.ffmpeg || !deps.ffplay) {
+    issues.push("ffmpeg/ffplay：安装 ffmpeg，或使用包含 bin\\ffmpeg.exe / bin\\ffplay.exe 的完整安装包。");
+  }
+  if (!(statusData && statusData.stt_ready)) {
+    issues.push("STT：等待模型下载；失败会自动尝试 tiny，仍失败请打开模型目录查看说明。");
+  } else if (stt.fallback) {
+    issues.push("STT：当前已回退 tiny/cpu/int8；需要更高识别质量时再处理原模型下载。");
+  }
+  if (devicesData.inputs.length === 0) {
+    issues.push("麦克风：在 Windows 隐私和声音设置里启用输入设备。");
+  }
+  if (devicesData.outputs.length === 0) {
+    issues.push("扬声器：在 Windows 声音设置里启用扬声器或耳机。");
+  }
+  return issues;
+}
+
+function renderInstallIssues(containerId) {
+  var container = $(containerId);
+  if (!container) return;
+  var issues = collectInstallIssues();
+  container.innerHTML = "";
+  container.classList.toggle("hidden", issues.length === 0);
+  if (!issues.length) return;
+
+  var title = document.createElement("div");
+  title.className = "install-issue-summary-title";
+  title.textContent = "需要处理的问题";
+  var list = document.createElement("ul");
+  issues.forEach(function(issue) {
+    var item = document.createElement("li");
+    item.textContent = issue;
+    list.appendChild(item);
+  });
+  container.appendChild(title);
+  container.appendChild(list);
 }
 
 function fillDeviceSelect(select, devices, currentValue) {
@@ -985,6 +1057,7 @@ function renderSettings() {
   $("ttsNativeVoice").value = tts.native_voice || "Microsoft Huihui Desktop";
   renderTtsModeOptions();
   $("hermesBaseUrl").value = hermes.base_url || "http://127.0.0.1:8642";
+  $("hermesApiKey").value = hermes.api_key || "bridge-secret-key";
   $("hermesModel").value = hermes.model || "hermes";
   $("hermesMaxTokens").value = hermes.max_tokens || 300;
   $("hermesTemperature").value = hermes.temperature || 0.7;
@@ -1012,6 +1085,49 @@ function hasNvidiaCuda() {
 function formatSttLine(stt) {
   stt = stt || {};
   return (stt.model || "-") + " / " + (stt.device || "-") + " / " + (stt.compute_type || "-");
+}
+
+function formatFfmpegLine(deps) {
+  deps = deps || {};
+  if (deps.ffmpeg && deps.ffplay) {
+    return (deps.ffmpeg_path || "ffmpeg 已检测") + " / " + (deps.ffplay_path || "ffplay 已检测");
+  }
+  return "未检测到：请安装 ffmpeg，或使用包含 bin\\ffmpeg.exe / bin\\ffplay.exe 的安装包。";
+}
+
+function formatInputDeviceLine() {
+  if (devicesData.inputs.length > 0) return devicesData.inputs.length + " 个输入设备";
+  return "未检测到输入设备，请在 Windows 隐私和声音设置里启用麦克风。";
+}
+
+function formatOutputDeviceLine() {
+  if (devicesData.outputs.length > 0) return devicesData.outputs.length + " 个输出设备";
+  return "未检测到输出设备，请在 Windows 声音设置里启用扬声器或耳机。";
+}
+
+function formatSttCheckLine(stt) {
+  stt = stt || {};
+  if (stt.fallback) {
+    return formatSttLine(stt) + " / 已自动回退";
+  }
+  if (stt.model) {
+    return formatSttLine(stt);
+  }
+  return "模型预热中；下载失败会自动尝试 tiny，仍失败请打开模型目录查看说明。";
+}
+
+function formatHermesLine(hermes) {
+  hermes = hermes || {};
+  var models = hermes.models || [];
+  var selected = hermes.selected_model || hermes.configured_model || "-";
+  var count = models.length ? models.length + " 个模型" : "未读取到模型";
+  if (!hermes.reachable) {
+    return (hermes.base_url || "未配置") + " / 未连接，请启动 Hermes Gateway，或检查地址和密钥";
+  }
+  if (!models.length) {
+    return (hermes.base_url || "未配置") + " / 已连接，但未读取到模型";
+  }
+  return (hermes.base_url || "未配置") + " / " + selected + " / " + count;
 }
 
 function modelCachePath() {
@@ -1236,6 +1352,7 @@ function readSettingsForm(applyProfile) {
     },
     hermes: {
       base_url: $("hermesBaseUrl").value.trim() || "http://127.0.0.1:8642",
+      api_key: $("hermesApiKey").value.trim() || "bridge-secret-key",
       model: $("hermesModel").value.trim() || "hermes",
       max_tokens: numberValue("hermesMaxTokens", 300),
       temperature: numberValue("hermesTemperature", 0.7)
@@ -1286,6 +1403,8 @@ function refreshStatus(options) {
     settingsData = statusData.settings;
     renderChecks("diagList");
     renderChecks("setupChecks");
+    renderInstallIssues("installIssueSummary");
+    renderInstallIssues("setupIssueSummary");
     renderSettings();
     syncHandsFreeMode(!!(settingsData && settingsData.ui && settingsData.ui.hands_free));
     if (settingsData && settingsData.setup && !settingsData.setup.first_run_complete) {

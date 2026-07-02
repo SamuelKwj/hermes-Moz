@@ -8,6 +8,7 @@ from typing import Any
 import sounddevice as sd
 
 from app_runtime import get_app_dir, get_logs_dir, get_model_cache_dir
+from hermes_client import choose_hermes_model, parse_model_ids
 from settings import SETTINGS_PATH
 
 
@@ -134,6 +135,7 @@ async def hermes_status(settings: dict[str, Any]) -> dict[str, Any]:
     hermes_settings = settings["hermes"]
     base_url = str(hermes_settings.get("base_url", "http://127.0.0.1:8642")).rstrip("/")
     api_key = str(hermes_settings.get("api_key", "bridge-secret-key"))
+    configured_model = str(hermes_settings.get("model", "hermes"))
 
     try:
         async with httpx.AsyncClient(timeout=2.0) as client:
@@ -142,14 +144,21 @@ async def hermes_status(settings: dict[str, Any]) -> dict[str, Any]:
                 headers={"Authorization": f"Bearer {api_key}"},
             )
         reachable = response.status_code < 500
+        models = parse_model_ids(response.json()) if reachable else []
         return {
             "base_url": base_url,
             "reachable": reachable,
             "status_code": response.status_code,
+            "models": models,
+            "configured_model": configured_model,
+            "selected_model": choose_hermes_model(configured_model, models),
         }
     except Exception as exc:
         return {
             "base_url": base_url,
             "reachable": False,
+            "models": [],
+            "configured_model": configured_model,
+            "selected_model": configured_model,
             "error": str(exc),
         }

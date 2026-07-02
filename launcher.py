@@ -41,6 +41,7 @@ configure_logging()
 logger = logging.getLogger("launcher")
 _tray_icon = None
 _edge_dock_controller = None
+WEBVIEW2_RUNTIME_URL = "https://developer.microsoft.com/microsoft-edge/webview2/"
 
 
 class DesktopApi:
@@ -163,6 +164,25 @@ def _create_tray_icon(window):
             pystray.MenuItem("退出", exit_app),
         ),
     )
+
+
+def _startup_error_message(exc: Exception) -> str:
+    return (
+        "Hermes Voice 桌面窗口启动失败。\n\n"
+        "如果这台电脑缺少 WebView2 Runtime，请安装 Microsoft Edge WebView2 Runtime 后重试。\n"
+        f"下载地址：{WEBVIEW2_RUNTIME_URL}\n\n"
+        f"错误信息：{exc}"
+    )
+
+
+def _show_startup_error(message: str) -> None:
+    if os.name == "nt":
+        try:
+            ctypes.windll.user32.MessageBoxW(None, message, "Hermes Voice 启动失败", 0x10)
+            return
+        except Exception:
+            logger.exception("Failed to show startup error message box.")
+    print(message, file=sys.stderr)
 
 
 def _evaluate_js(window, script: str) -> None:
@@ -678,40 +698,44 @@ def main():
     desktop_api = DesktopApi()
     hotkey_controller = None
     edge_dock_controller = None
-    window = webview.create_window(
-        title="Voice Assistant",
-        url=f"http://{host}:{port}",
-        width=360,
-        height=560,
-        frameless=True,
-        on_top=bool(settings["ui"].get("always_on_top", True)),
-        resizable=False,
-        min_size=(80, 80),
-        shadow=False,
-        background_color="#0b0f24",
-        transparent=False,
-        easy_drag=False,
-        draggable=True,
-        js_api=desktop_api,
-    )
-    desktop_api._bind_window(window)
-
-    def on_started():
-        nonlocal hotkey_controller, edge_dock_controller
-        global _tray_icon, _edge_dock_controller
-        hotkey_controller = GlobalHotkeyController(window)
-        hotkey_controller.start()
-        edge_dock_controller = EdgeDockController(window)
-        _edge_dock_controller = edge_dock_controller
-        edge_dock_controller.start()
-        _tray_icon = _create_tray_icon(window)
-        if _tray_icon:
-            _tray_icon.run_detached()
-        if settings["ui"].get("start_minimized", False):
-            window.hide()
 
     try:
+        window = webview.create_window(
+            title="Voice Assistant",
+            url=f"http://{host}:{port}",
+            width=360,
+            height=560,
+            frameless=True,
+            on_top=bool(settings["ui"].get("always_on_top", True)),
+            resizable=False,
+            min_size=(80, 80),
+            shadow=False,
+            background_color="#0b0f24",
+            transparent=False,
+            easy_drag=False,
+            draggable=True,
+            js_api=desktop_api,
+        )
+        desktop_api._bind_window(window)
+
+        def on_started():
+            nonlocal hotkey_controller, edge_dock_controller
+            global _tray_icon, _edge_dock_controller
+            hotkey_controller = GlobalHotkeyController(window)
+            hotkey_controller.start()
+            edge_dock_controller = EdgeDockController(window)
+            _edge_dock_controller = edge_dock_controller
+            edge_dock_controller.start()
+            _tray_icon = _create_tray_icon(window)
+            if _tray_icon:
+                _tray_icon.run_detached()
+            if settings["ui"].get("start_minimized", False):
+                window.hide()
+
         webview.start(on_started, gui="edgechromium", debug=False)
+    except Exception as exc:
+        logger.exception("Desktop widget failed to start.")
+        _show_startup_error(_startup_error_message(exc))
     finally:
         if hotkey_controller:
             hotkey_controller.stop()
@@ -720,8 +744,8 @@ def main():
             _edge_dock_controller = None
         if _tray_icon:
             _tray_icon.stop()
-    server_thread.stop()
-    logger.info("Shutdown complete.")
+        server_thread.stop()
+        logger.info("Shutdown complete.")
 
 
 if __name__ == "__main__":

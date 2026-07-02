@@ -220,13 +220,13 @@ def _stt_settings() -> dict:
 
 def _lightweight_fallback(language: str, beam_size: int, reason: str | None = None) -> dict:
     return {
-        "model": "base",
+        "model": "tiny",
         "language": language,
         "device": "cpu",
         "compute_type": "int8",
         "beam_size": beam_size,
         "fallback": True,
-        "fallback_reason": reason or "GPU 模式暂不可用，已自动回退轻量模式。",
+        "fallback_reason": reason or "STT 模型启动失败，已自动回退 tiny/cpu/int8。",
     }
 
 
@@ -251,10 +251,18 @@ def _force_lightweight_fallback(reason: str) -> None:
 def _gpu_fallback_reason(error_message: str) -> str:
     message = error_message.lower()
     if "cublas" in message or "cudnn" in message or ".dll" in message:
-        return "GPU 运行库不可用，已自动回退轻量模式。"
+        return "GPU 运行库不可用，已自动回退 tiny/cpu/int8。"
     if "hub" in message or "cache" in message or "connection" in message or "internet" in message:
-        return "GPU STT 模型未下载成功，已自动回退轻量模式。"
-    return "GPU 模式启动失败，已自动回退轻量模式。"
+        return "STT 模型下载失败，已自动回退 tiny/cpu/int8。"
+    return "STT 模型启动失败，已自动回退 tiny/cpu/int8。"
+
+
+def _is_tiny_cpu_fallback(config: dict) -> bool:
+    return (
+        config.get("model") == "tiny"
+        and config.get("device") == "cpu"
+        and config.get("compute_type") == "int8"
+    )
 
 
 def _get_model():
@@ -289,7 +297,7 @@ def _get_model():
             _LAST_ERROR = None
         except Exception as exc:
             _LAST_ERROR = str(exc)
-            if config["device"] != "cuda":
+            if _is_tiny_cpu_fallback(config):
                 raise
 
             fallback = _lightweight_fallback(
@@ -297,14 +305,18 @@ def _get_model():
                 config["beam_size"],
                 _gpu_fallback_reason(_LAST_ERROR),
             )
-            logger.exception("GPU STT model failed to load. Falling back to lightweight STT.")
+            fallback_local_path = _local_stt_model_path(fallback["model"])
+            fallback_target = str(fallback_local_path) if fallback_local_path else fallback["model"]
+            logger.exception("STT model failed to load. Falling back to tiny STT.")
             _MODEL = WhisperModel(
-                fallback["model"],
+                fallback_target,
                 device=fallback["device"],
                 compute_type=fallback["compute_type"],
                 local_files_only=False,
             )
-            _MODEL_CONFIG = (fallback["model"], fallback["device"], fallback["compute_type"])
+            _MODEL_CONFIG = (fallback_target, fallback["device"], fallback["compute_type"])
+            if fallback_local_path:
+                fallback["model_path"] = str(fallback_local_path)
             _ACTIVE_CONFIG = fallback
     return _MODEL
 

@@ -88,6 +88,41 @@ class ReleaseContractsTest(unittest.TestCase):
         self.assertIn("检测完成", frontend_text)
         self.assertIn("def open_model_dir", launcher_text)
 
+    def test_settings_ui_exposes_hermes_gateway_connection_fields(self):
+        frontend_text = (ROOT / "frontend" / "index.html").read_text(encoding="utf-8")
+
+        self.assertIn("hermesBaseUrl", frontend_text)
+        self.assertIn("hermesApiKey", frontend_text)
+        self.assertIn("hermesModel", frontend_text)
+        self.assertIn("api_key:", frontend_text)
+
+    def test_diagnostics_explain_missing_gateway_and_stt_fallback(self):
+        frontend_text = (ROOT / "frontend" / "index.html").read_text(encoding="utf-8")
+        hermes_client_text = (ROOT / "backend" / "hermes_client.py").read_text(encoding="utf-8")
+
+        self.assertIn("installIssueSummary", frontend_text)
+        self.assertIn("需要处理的问题", frontend_text)
+        self.assertIn("安装或启动 Hermes Gateway", frontend_text)
+        self.assertIn("请启动 Hermes Gateway", frontend_text)
+        self.assertIn("检查地址和密钥", frontend_text)
+        self.assertIn("自动尝试 tiny", frontend_text)
+        self.assertIn("包含 bin\\\\ffmpeg.exe", frontend_text)
+        self.assertIn("Windows 隐私和声音设置", frontend_text)
+        self.assertIn("Windows 声音设置", frontend_text)
+        self.assertIn("请启动 Hermes Gateway", hermes_client_text)
+
+    def test_webview2_is_prompt_only_not_bundled(self):
+        launcher_text = (ROOT / "launcher.py").read_text(encoding="utf-8")
+        installer_text = (ROOT / "installer" / "inno" / "HermesVoice.iss").read_text(encoding="utf-8")
+        spec_text = (ROOT / "packaging" / "hermes_voice.spec").read_text(encoding="utf-8")
+
+        self.assertIn("WebView2 Runtime", launcher_text)
+        self.assertIn("MessageBoxW", launcher_text)
+        self.assertNotIn("MicrosoftEdgeWebView2RuntimeInstaller", installer_text)
+        self.assertNotIn("EvergreenBootstrapper", installer_text)
+        self.assertNotIn("MicrosoftEdgeWebView2RuntimeInstaller", spec_text)
+        self.assertNotIn("EvergreenBootstrapper", spec_text)
+
     def test_public_release_gate_tracks_external_sale_requirements(self):
         gate_path = ROOT / "scripts" / "release_gate.ps1"
         evidence_path = ROOT / "docs" / "release_evidence_template.md"
