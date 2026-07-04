@@ -33,6 +33,51 @@ SOFT_BREAKS = "，,、 "
 FIRST_TTS_MIN_CHARS = 20
 NEXT_TTS_MIN_CHARS = 36
 MAX_TTS_CHARS = 80
+_LAST_TURN_LATENCY: dict[str, int | None] | None = None
+
+
+def reset_last_turn_latency() -> None:
+    global _LAST_TURN_LATENCY
+    _LAST_TURN_LATENCY = None
+
+
+def last_turn_latency() -> dict[str, int | None] | None:
+    if _LAST_TURN_LATENCY is None:
+        return None
+    return dict(_LAST_TURN_LATENCY)
+
+
+def _elapsed_ms(started_at: float, marker: float | None) -> int | None:
+    if marker is None:
+        return None
+    return max(0, int(round((marker - started_at) * 1000)))
+
+
+def _record_last_turn_latency(
+    started_at: float,
+    stt_done_at: float | None,
+    llm_first_token_at: float | None,
+    tts_first_chunk_at: float | None,
+    playback_start_at: float | None,
+    finished_at: float,
+) -> None:
+    global _LAST_TURN_LATENCY
+    latency = {
+        "stt_ms": _elapsed_ms(started_at, stt_done_at),
+        "llm_first_token_ms": _elapsed_ms(started_at, llm_first_token_at),
+        "tts_first_chunk_ms": _elapsed_ms(started_at, tts_first_chunk_at),
+        "playback_start_ms": _elapsed_ms(started_at, playback_start_at),
+        "total_ms": _elapsed_ms(started_at, finished_at),
+    }
+    _LAST_TURN_LATENCY = latency
+    logger.info(
+        "Turn latency: STT %sms / first token %sms / first audio %sms / playback %sms / total %sms",
+        latency["stt_ms"],
+        latency["llm_first_token_ms"],
+        latency["tts_first_chunk_ms"],
+        latency["playback_start_ms"],
+        latency["total_ms"],
+    )
 
 
 def _normalize_wake_text(text: str) -> str:
@@ -393,6 +438,8 @@ class _ContinuousPcmPlayer:
         self._done = threading.Event()
         self._current = np.empty(0, dtype=np.float32)
         self._position = 0
+        self._playback_started = False
+        self.on_playback_start = None
 
     def put(self, audio: np.ndarray) -> None:
         if self._done.is_set():
@@ -462,6 +509,10 @@ class _ContinuousPcmPlayer:
             take = min(frames - filled, remaining)
             if take <= 0:
                 break
+            if not self._playback_started:
+                self._playback_started = True
+                if self.on_playback_start is not None:
+                    self.on_playback_start()
             output[filled:filled + take] = self._current[self._position:self._position + take]
             self._position += take
             filled += take
@@ -794,27 +845,46 @@ class VoicePipeline:
     async def run_turn(self, wav_path: str, history: list = None) -> dict:
         """Full turn: transcribe → LLM → synthesize → play."""
         history = history or []
+        turn_started_at = time.perf_counter()
+        playback_start_at = None
+
+        def mark_playback_start() -> None:
+            nonlocal playback_start_at
+            if playback_start_at is None:
+                playback_start_at = time.perf_counter()
+
         # 1. STT
         text = await transcribe(wav_path)
+        stt_done_at = time.perf_counter()
         logger.info("STT: %s", text)
 
         # 2. Hermes LLM
         reply = await self.hermes.chat(text, history)
+        llm_first_token_at = time.perf_counter()
         logger.info("LLM: %s", reply)
 
         # 3. TTS
         mp3_path = await synthesize(reply)
+        tts_first_chunk_at = time.perf_counter()
         logger.info("TTS saved: %s", mp3_path)
 
         # 4. Play
         try:
-            await self._play_audio(mp3_path)
+            await self._play_audio(mp3_path, on_playback_start=mark_playback_start)
         finally:
             try:
                 os.unlink(mp3_path)
             except OSError:
                 pass
 
+        _record_last_turn_latency(
+            turn_started_at,
+            stt_done_at,
+            llm_first_token_at,
+            tts_first_chunk_at,
+            playback_start_at,
+            time.perf_counter(),
+        )
         return {"user": text, "assistant": reply}
 
     async def run_turn_stream(self, wav_path: str, history: list = None, on_event=None, require_wake: bool = False) -> dict:
@@ -824,6 +894,7 @@ class VoicePipeline:
             async def on_event(_event):
                 return None
 
+        turn_started_at = time.perf_counter()
         try:
             text = await transcribe(wav_path)
         except RuntimeError as exc:
@@ -832,6 +903,7 @@ class VoicePipeline:
                 await on_event({"type": "wake_ignored", "text": ""})
                 return {"user": "", "assistant": "", "ignored": True}
             raise
+        stt_done_at = time.perf_counter()
         logger.info("STT: %s", text)
         if require_wake:
             if _is_stt_hallucination(text):
@@ -850,7 +922,13 @@ class VoicePipeline:
             text = gated_text
             logger.info("Wake word accepted; command: %s", text)
         await on_event({"type": "user", "text": text})
-        return await self._run_llm_tts_stream(text, history, on_event)
+        return await self._run_llm_tts_stream(
+            text,
+            history,
+            on_event,
+            turn_started_at=turn_started_at,
+            stt_done_at=stt_done_at,
+        )
 
     async def run_text_turn_stream(self, text: str, history: list = None, on_event=None) -> dict:
         """Text turn that reuses the same streaming LLM and TTS playback path."""
@@ -861,16 +939,51 @@ class VoicePipeline:
                 return None
         if not text:
             return {"user": "", "assistant": "", "ignored": True}
+        turn_started_at = time.perf_counter()
         logger.info("Text input: %s", text)
         await on_event({"type": "user", "text": text})
-        return await self._run_llm_tts_stream(text, history, on_event)
+        return await self._run_llm_tts_stream(
+            text,
+            history,
+            on_event,
+            turn_started_at=turn_started_at,
+            stt_done_at=turn_started_at,
+        )
 
-    async def _run_llm_tts_stream(self, text: str, history: list, on_event) -> dict:
+    async def _run_llm_tts_stream(
+        self,
+        text: str,
+        history: list,
+        on_event,
+        turn_started_at: float | None = None,
+        stt_done_at: float | None = None,
+    ) -> dict:
+        turn_started_at = turn_started_at or time.perf_counter()
+        llm_first_token_at = None
+        tts_first_chunk_at = None
+        playback_start_at = None
+
+        def mark_first_token() -> None:
+            nonlocal llm_first_token_at
+            if llm_first_token_at is None:
+                llm_first_token_at = time.perf_counter()
+
+        def mark_first_tts_chunk() -> None:
+            nonlocal tts_first_chunk_at
+            if tts_first_chunk_at is None:
+                tts_first_chunk_at = time.perf_counter()
+
+        def mark_playback_start() -> None:
+            nonlocal playback_start_at
+            if playback_start_at is None:
+                playback_start_at = time.perf_counter()
+
         output_device, output_sample_rate, output_volume = self._playback_settings()
         player = _ContinuousPcmPlayer(output_device, output_sample_rate, output_volume)
+        player.on_playback_start = mark_playback_start
         self._active_player = player
         tts_queue: asyncio.Queue[str | None] = asyncio.Queue()
-        synth_task = asyncio.create_task(self._tts_synth_worker(tts_queue, player))
+        synth_task = asyncio.create_task(self._tts_synth_worker(tts_queue, player, on_first_chunk=mark_first_tts_chunk))
         player_task = asyncio.create_task(self._tts_audio_player(player))
         reply_parts: list[str] = []
         sentence_buffer = ""
@@ -878,6 +991,8 @@ class VoicePipeline:
 
         try:
             async for delta in self.hermes.chat_stream(text, history):
+                if delta:
+                    mark_first_token()
                 reply_parts.append(delta)
                 sentence_buffer += delta
                 await on_event({"type": "assistant_delta", "delta": delta})
@@ -901,6 +1016,14 @@ class VoicePipeline:
             await tts_queue.put(None)
             await synth_task
             await player_task
+            _record_last_turn_latency(
+                turn_started_at,
+                stt_done_at,
+                llm_first_token_at,
+                tts_first_chunk_at,
+                playback_start_at,
+                time.perf_counter(),
+            )
             return {"user": text, "assistant": reply}
         except asyncio.CancelledError:
             player.stop()
@@ -926,7 +1049,8 @@ class VoicePipeline:
             raise RuntimeError("没有检测到可用扬声器，请在 Windows 声音设置里启用输出设备。")
         return output_device, output_sample_rate or SAMPLE_RATE, float(audio_settings.get("output_volume", 1.0))
 
-    async def _tts_synth_worker(self, text_queue: asyncio.Queue, player: _ContinuousPcmPlayer) -> None:
+    async def _tts_synth_worker(self, text_queue: asyncio.Queue, player: _ContinuousPcmPlayer, on_first_chunk=None) -> None:
+        first_chunk_reported = False
         try:
             while True:
                 text = await text_queue.get()
@@ -937,6 +1061,9 @@ class VoicePipeline:
                 logger.info("TTS chunk saved: %s", mp3_path)
                 try:
                     pcm = await asyncio.to_thread(_decode_audio_file, mp3_path, player.sample_rate)
+                    if not first_chunk_reported and on_first_chunk is not None:
+                        first_chunk_reported = True
+                        on_first_chunk()
                     await asyncio.to_thread(player.put, pcm)
                 finally:
                     try:
@@ -953,10 +1080,11 @@ class VoicePipeline:
     async def _tts_audio_player(self, player: _ContinuousPcmPlayer) -> None:
         await asyncio.to_thread(player.run)
 
-    async def _play_audio(self, path: str) -> None:
+    async def _play_audio(self, path: str, on_playback_start=None) -> None:
         """Play MP3 via ffmpeg decode + sounddevice."""
         output_device, output_sample_rate, output_volume = self._playback_settings()
         player = _ContinuousPcmPlayer(output_device, output_sample_rate, output_volume)
+        player.on_playback_start = on_playback_start
         self._active_player = player
         try:
             pcm = await asyncio.to_thread(_decode_audio_file, path, output_sample_rate)

@@ -15,6 +15,24 @@
 - 源码运行需要 ffmpeg 已加入 PATH；发布构建会从 PATH 复制 `ffmpeg.exe` / `ffplay.exe` 到本地 `bin\` 并打进安装包
 - Hermes Gateway 运行在 `http://127.0.0.1:8642`，默认密钥 `bridge-secret-key`
 
+## 端口约定
+
+- Hermes Gateway: `http://127.0.0.1:8642`
+- Hermes Voice Desktop: `http://127.0.0.1:8765`
+
+正常安装和使用时按以上端口排查；`VOICE_WIDGET_PORT` 只用于调试或烟测临时覆盖。
+
+## 新电脑检查顺序
+
+1. 打开 `http://127.0.0.1:8642/health`，确认 Hermes Gateway 已启动。
+2. 打开 `http://127.0.0.1:8642/v1/models`，确认能返回 `hermes-agent`。
+3. 确认 Voice Desktop 里的 Hermes API key 与 Gateway 配置一致。
+4. 确认 `8765` 未被其他程序占用。
+5. 确认已安装 WebView2 Runtime。
+6. 确认 `ffmpeg.exe` / `ffplay.exe` 可用，或使用完整安装包。
+7. 在 Windows 隐私和声音设置里允许麦克风，并确认有可用输入/输出设备。
+8. 首次 STT 模型下载失败时，打开模型目录查看“模型手动下载说明.txt”。
+
 ## 安装
 
 ```powershell

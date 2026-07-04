@@ -111,6 +111,19 @@ class ReleaseContractsTest(unittest.TestCase):
         self.assertIn("Windows 声音设置", frontend_text)
         self.assertIn("请启动 Hermes Gateway", hermes_client_text)
 
+    def test_settings_ui_exposes_hermes_problem_and_latency_diagnostics(self):
+        frontend_text = (ROOT / "frontend" / "index.html").read_text(encoding="utf-8")
+        server_text = (ROOT / "backend" / "server.py").read_text(encoding="utf-8")
+
+        self.assertIn("formatTurnLatencyLine", frontend_text)
+        self.assertIn("last_turn_latency", frontend_text)
+        self.assertIn("最近耗时", frontend_text)
+        self.assertIn("首 token", frontend_text)
+        self.assertIn("首音频", frontend_text)
+        self.assertIn("hermes.problem", frontend_text)
+        self.assertIn("密钥错误", frontend_text)
+        self.assertIn("last_turn_latency", server_text)
+
     def test_webview2_is_prompt_only_not_bundled(self):
         launcher_text = (ROOT / "launcher.py").read_text(encoding="utf-8")
         installer_text = (ROOT / "installer" / "inno" / "HermesVoice.iss").read_text(encoding="utf-8")

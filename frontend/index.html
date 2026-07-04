@@ -923,6 +923,7 @@ function collectChecks() {
   var hermes = (statusData && statusData.hermes) || {};
   var stt = (statusData && statusData.stt) || {};
   var accelerator = (statusData && statusData.accelerator) || {};
+  var latency = statusData && statusData.runtime && statusData.runtime.last_turn_latency;
   var profile = (settingsData && settingsData.performance && settingsData.performance.profile) || "lightweight";
   var configuredStt = (settingsData && settingsData.stt) || {};
   var cudaRequested = profile === "extreme_gpu" || configuredStt.device === "cuda";
@@ -934,6 +935,7 @@ function collectChecks() {
     checkItem("麦克风", devicesData.inputs.length > 0, formatInputDeviceLine()),
     checkItem("扬声器", devicesData.outputs.length > 0, formatOutputDeviceLine()),
     checkItem("Hermes Gateway", hermes.reachable, formatHermesLine(hermes)),
+    checkItem("最近耗时", true, formatTurnLatencyLine(latency)),
     checkItem(
       "STT",
       sttOk,
@@ -973,8 +975,8 @@ function collectInstallIssues() {
   var hermes = (statusData && statusData.hermes) || {};
   var stt = (statusData && statusData.stt) || {};
   var issues = [];
-  if (!hermes.reachable) {
-    issues.push("Hermes Gateway：安装或启动 Hermes Gateway，并检查地址和密钥。");
+  if (!hermes.reachable || hermes.problem) {
+    issues.push("Hermes Gateway：" + formatHermesProblem(hermes));
   }
   if (!deps.ffmpeg || !deps.ffplay) {
     issues.push("ffmpeg/ffplay：安装 ffmpeg，或使用包含 bin\\ffmpeg.exe / bin\\ffplay.exe 的完整安装包。");
@@ -1116,13 +1118,42 @@ function formatSttCheckLine(stt) {
   return "模型预热中；下载失败会自动尝试 tiny，仍失败请打开模型目录查看说明。";
 }
 
+function formatLatencyValue(value) {
+  var numeric = Number(value);
+  if (!Number.isFinite(numeric)) return "-";
+  return Math.max(0, Math.round(numeric)) + "ms";
+}
+
+function formatTurnLatencyLine(latency) {
+  latency = latency || (statusData && statusData.runtime && statusData.runtime.last_turn_latency);
+  if (!latency) return "暂无最近耗时；完成一次语音对话后显示。";
+  return [
+    "STT " + formatLatencyValue(latency.stt_ms),
+    "首 token " + formatLatencyValue(latency.llm_first_token_ms),
+    "首音频 " + formatLatencyValue(latency.tts_first_chunk_ms),
+    "总计 " + formatLatencyValue(latency.total_ms)
+  ].join(" / ");
+}
+
+function formatHermesProblem(hermes) {
+  hermes = hermes || {};
+  if (hermes.message) return hermes.message;
+  if (hermes.problem === "gateway_unreachable") return "Hermes Gateway 未启动：请启动 Hermes Gateway。";
+  if (hermes.problem === "unauthorized") return "密钥错误：请确认 API key 与 Hermes 配置一致。";
+  if (hermes.problem === "missing_hermes_agent") return "缺少 hermes-agent：请检查 Hermes 模型列表。";
+  if (hermes.problem === "models_error" || hermes.problem === "models_invalid" || hermes.problem === "models_empty") {
+    return "模型列表异常：请检查 /v1/models 返回内容。";
+  }
+  return "安装或启动 Hermes Gateway，并检查地址和密钥。";
+}
+
 function formatHermesLine(hermes) {
   hermes = hermes || {};
   var models = hermes.models || [];
   var selected = hermes.selected_model || hermes.configured_model || "-";
   var count = models.length ? models.length + " 个模型" : "未读取到模型";
-  if (!hermes.reachable) {
-    return (hermes.base_url || "未配置") + " / 未连接，请启动 Hermes Gateway，或检查地址和密钥";
+  if (!hermes.reachable || hermes.problem) {
+    return (hermes.base_url || "未配置") + " / " + formatHermesProblem(hermes);
   }
   if (!models.length) {
     return (hermes.base_url || "未配置") + " / 已连接，但未读取到模型";

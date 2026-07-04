@@ -136,29 +136,129 @@ async def hermes_status(settings: dict[str, Any]) -> dict[str, Any]:
     base_url = str(hermes_settings.get("base_url", "http://127.0.0.1:8642")).rstrip("/")
     api_key = str(hermes_settings.get("api_key", "bridge-secret-key"))
     configured_model = str(hermes_settings.get("model", "hermes"))
+    result: dict[str, Any] = {
+        "base_url": base_url,
+        "reachable": False,
+        "status_code": None,
+        "health_status_code": None,
+        "models_status_code": None,
+        "models": [],
+        "configured_model": configured_model,
+        "selected_model": configured_model,
+        "auth_ok": False,
+        "has_hermes_agent": False,
+        "problem": None,
+        "message": "Hermes Gateway 尚未检测。",
+    }
 
     try:
         async with httpx.AsyncClient(timeout=2.0) as client:
-            response = await client.get(
-                f"{base_url}/v1/models",
-                headers={"Authorization": f"Bearer {api_key}"},
+            try:
+                health_response = await client.get(f"{base_url}/health")
+            except Exception as exc:
+                result.update(
+                    {
+                        "problem": "gateway_unreachable",
+                        "message": f"Hermes Gateway 未启动或不可达：{exc}",
+                        "error": str(exc),
+                    }
+                )
+                return result
+
+            result["health_status_code"] = health_response.status_code
+            if health_response.status_code != 200:
+                result.update(
+                    {
+                        "problem": "gateway_unhealthy",
+                        "message": f"Hermes Gateway /health 返回 {health_response.status_code}，请确认 Hermes 已正常启动。",
+                    }
+                )
+                return result
+
+            try:
+                models_response = await client.get(
+                    f"{base_url}/v1/models",
+                    headers={"Authorization": f"Bearer {api_key}"},
+                )
+            except Exception as exc:
+                result.update(
+                    {
+                        "problem": "models_unreachable",
+                        "message": f"Hermes Gateway 已启动，但 /v1/models 无法访问：{exc}",
+                        "error": str(exc),
+                    }
+                )
+                return result
+
+        result["models_status_code"] = models_response.status_code
+        result["status_code"] = models_response.status_code
+
+        if models_response.status_code in (401, 403):
+            result.update(
+                {
+                    "problem": "unauthorized",
+                    "message": "Hermes Gateway 密钥错误：请确认 API key 与 Hermes 配置一致。",
+                }
             )
-        reachable = response.status_code < 500
-        models = parse_model_ids(response.json()) if reachable else []
-        return {
-            "base_url": base_url,
-            "reachable": reachable,
-            "status_code": response.status_code,
-            "models": models,
-            "configured_model": configured_model,
-            "selected_model": choose_hermes_model(configured_model, models),
-        }
+            return result
+
+        if not 200 <= models_response.status_code < 300:
+            result.update(
+                {
+                    "problem": "models_error",
+                    "message": f"Hermes Gateway 模型列表异常：/v1/models 返回 {models_response.status_code}。",
+                }
+            )
+            return result
+
+        result["auth_ok"] = True
+        try:
+            models = parse_model_ids(models_response.json())
+        except Exception as exc:
+            result.update(
+                {
+                    "problem": "models_invalid",
+                    "message": f"Hermes Gateway 模型列表解析失败：{exc}",
+                    "error": str(exc),
+                }
+            )
+            return result
+
+        result["models"] = models
+        result["selected_model"] = choose_hermes_model(configured_model, models)
+        result["has_hermes_agent"] = "hermes-agent" in models
+
+        if not models:
+            result.update(
+                {
+                    "problem": "models_empty",
+                    "message": "Hermes Gateway 已连接，但 /v1/models 未返回可用模型。",
+                }
+            )
+            return result
+
+        if not result["has_hermes_agent"]:
+            result.update(
+                {
+                    "problem": "missing_hermes_agent",
+                    "message": "Hermes Gateway 已连接，但模型列表缺少 hermes-agent。",
+                }
+            )
+            return result
+
+        result.update(
+            {
+                "reachable": True,
+                "message": "Hermes Gateway 正常，已检测到 hermes-agent。",
+            }
+        )
+        return result
     except Exception as exc:
-        return {
-            "base_url": base_url,
-            "reachable": False,
-            "models": [],
-            "configured_model": configured_model,
-            "selected_model": configured_model,
-            "error": str(exc),
-        }
+        result.update(
+            {
+                "problem": "diagnostic_error",
+                "message": f"Hermes Gateway 诊断失败：{exc}",
+                "error": str(exc),
+            }
+        )
+        return result

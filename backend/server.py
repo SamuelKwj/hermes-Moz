@@ -18,7 +18,7 @@ from app_runtime import (
     get_frontend_index,
     prepend_bundled_bin_to_path,
 )
-from voice_pipeline import VoicePipeline
+from voice_pipeline import VoicePipeline, last_turn_latency
 from tts_engine import synthesize
 from settings import PERFORMANCE_PROFILES, get_host, get_port, load_settings, patch_settings
 from system_checks import accelerator_status, dependency_status, hermes_status, list_audio_devices, runtime_status
@@ -211,6 +211,8 @@ async def tts_voices(locale: str = "zh"):
 @app.get("/api/status")
 async def status():
     settings = load_settings()
+    runtime = runtime_status()
+    runtime["last_turn_latency"] = last_turn_latency()
     return {
         "ok": True,
         "stt_ready": _stt_ready,
@@ -218,7 +220,7 @@ async def status():
         "last_error": _last_error,
         "dependencies": dependency_status(),
         "accelerator": accelerator_status(),
-        "runtime": runtime_status(),
+        "runtime": runtime,
         "hermes": await hermes_status(settings),
         "performance_profiles": PERFORMANCE_PROFILES,
         "stt": _stt_status(),
