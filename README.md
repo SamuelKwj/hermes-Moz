@@ -129,6 +129,16 @@ dist\installer\HermesVoiceSetup.exe
 - `VOICE_USE_CUDA`: 设为 `1` 时使用 CUDA
 - `VOICE_TTS_VOICE`: 默认 `zh-CN-XiaoxiaoNeural`
 
+## 快速响应
+
+默认启用语音“快速响应”模式：
+
+- 松开录音后播放一个本地短提示音，确认系统已接收。
+- 首段 TTS 更早开始合成，降低首次出声等待。
+- STT 识别方案不变，仍使用当前 faster-whisper 配置。
+
+如需更稳的朗读节奏，可在设置页把“语音响应”切回“标准”。
+
 ## 产品化待办
 
 1. 在干净 Windows 环境验证 WebView2、ffmpeg、麦克风权限。

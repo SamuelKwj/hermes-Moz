@@ -1,6 +1,7 @@
 """Voice pipeline orchestrator -- record → STT → Hermes LLM → TTS → play."""
 import asyncio
 from collections import deque
+from dataclasses import dataclass
 import logging
 import os
 import queue
@@ -33,7 +34,48 @@ SOFT_BREAKS = "，,、 "
 FIRST_TTS_MIN_CHARS = 20
 NEXT_TTS_MIN_CHARS = 36
 MAX_TTS_CHARS = 80
+FAST_FIRST_TTS_MIN_CHARS = 12
+FAST_NEXT_TTS_MIN_CHARS = 28
+FAST_MAX_TTS_CHARS = 70
 _LAST_TURN_LATENCY: dict[str, int | None] | None = None
+
+
+@dataclass(frozen=True)
+class TtsChunkConfig:
+    first_chunk_chars: int
+    next_chunk_chars: int
+    max_chunk_chars: int
+
+
+STANDARD_TTS_CHUNK_CONFIG = TtsChunkConfig(FIRST_TTS_MIN_CHARS, NEXT_TTS_MIN_CHARS, MAX_TTS_CHARS)
+FAST_TTS_CHUNK_CONFIG = TtsChunkConfig(FAST_FIRST_TTS_MIN_CHARS, FAST_NEXT_TTS_MIN_CHARS, FAST_MAX_TTS_CHARS)
+
+
+def _bounded_int(value, fallback: int, minimum: int, maximum: int) -> int:
+    try:
+        numeric = int(value)
+    except (TypeError, ValueError):
+        return fallback
+    return max(minimum, min(maximum, numeric))
+
+
+def tts_chunk_config(settings: dict | None = None) -> TtsChunkConfig:
+    settings = load_settings() if settings is None else settings
+    tts_settings = settings.get("tts", {}) if isinstance(settings, dict) else {}
+    if str(tts_settings.get("response_mode", "fast")) != "fast":
+        return STANDARD_TTS_CHUNK_CONFIG
+    first_chars = _bounded_int(tts_settings.get("fast_first_chunk_chars"), FAST_FIRST_TTS_MIN_CHARS, 8, 30)
+    next_chars = _bounded_int(tts_settings.get("fast_next_chunk_chars"), FAST_NEXT_TTS_MIN_CHARS, first_chars, 48)
+    max_chars = _bounded_int(tts_settings.get("fast_max_chunk_chars"), FAST_MAX_TTS_CHARS, next_chars, 120)
+    return TtsChunkConfig(first_chars, next_chars, max_chars)
+
+
+def _bounded_float(value, fallback: float, minimum: float, maximum: float) -> float:
+    try:
+        numeric = float(value)
+    except (TypeError, ValueError):
+        return fallback
+    return max(minimum, min(maximum, numeric))
 
 
 def reset_last_turn_latency() -> None:
@@ -358,11 +400,17 @@ def _trim_silence(audio: np.ndarray, sample_rate: int, threshold: float) -> np.n
     return trimmed
 
 
-def _pop_sentence_chunks(buffer: str, force: bool = False, first_chunk: bool = False) -> tuple[list[str], str]:
+def _pop_sentence_chunks(
+    buffer: str,
+    force: bool = False,
+    first_chunk: bool = False,
+    chunk_config: TtsChunkConfig | None = None,
+) -> tuple[list[str], str]:
     chunks: list[str] = []
     text = buffer
     pending = ""
-    min_chars = FIRST_TTS_MIN_CHARS if first_chunk else NEXT_TTS_MIN_CHARS
+    chunk_config = chunk_config or STANDARD_TTS_CHUNK_CONFIG
+    min_chars = chunk_config.first_chunk_chars if first_chunk else chunk_config.next_chunk_chars
     while text:
         match = HARD_SENTENCE_RE.match(text)
         if match:
@@ -375,9 +423,9 @@ def _pop_sentence_chunks(buffer: str, force: bool = False, first_chunk: bool = F
             continue
 
         candidate = (pending + text).strip()
-        if len(candidate) >= MAX_TTS_CHARS:
+        if len(candidate) >= chunk_config.max_chunk_chars:
             split_at = -1
-            search_limit = min(len(candidate), MAX_TTS_CHARS)
+            search_limit = min(len(candidate), chunk_config.max_chunk_chars)
             for mark in "。！？!?；;\n":
                 split_at = max(split_at, candidate.rfind(mark, 0, search_limit))
             if split_at < min_chars:
@@ -393,7 +441,7 @@ def _pop_sentence_chunks(buffer: str, force: bool = False, first_chunk: bool = F
 
     remainder = (pending + text).strip()
     if force and remainder:
-        if chunks and len(remainder) < NEXT_TTS_MIN_CHARS // 2:
+        if chunks and len(remainder) < chunk_config.next_chunk_chars // 2:
             chunks[-1] = (chunks[-1] + remainder).strip()
         else:
             chunks.append(remainder)
@@ -427,6 +475,19 @@ def _decode_audio_file(path: str, sample_rate: int) -> np.ndarray:
         **hidden_window_kwargs(),
     )
     return np.frombuffer(result.stdout, dtype=np.float32).copy()
+
+
+def _ack_tone(sample_rate: int, volume: float) -> np.ndarray:
+    duration_seconds = 0.09
+    frequency_hz = 880.0
+    samples = max(1, int(sample_rate * duration_seconds))
+    timeline = np.arange(samples, dtype=np.float32) / float(sample_rate)
+    tone = np.sin(2 * np.pi * frequency_hz * timeline).astype(np.float32)
+    fade_samples = min(samples // 2, max(1, int(sample_rate * 0.012)))
+    envelope = np.ones(samples, dtype=np.float32)
+    envelope[:fade_samples] = np.linspace(0.0, 1.0, fade_samples, dtype=np.float32)
+    envelope[-fade_samples:] = np.linspace(1.0, 0.0, fade_samples, dtype=np.float32)
+    return np.clip(tone * envelope * float(volume), -1.0, 1.0).astype(np.float32)
 
 
 class _ContinuousPcmPlayer:
@@ -648,6 +709,37 @@ class VoicePipeline:
         player = self._active_player
         if player is not None:
             player.stop()
+
+    async def play_fast_feedback(self, settings: dict | None = None) -> bool:
+        settings = load_settings() if settings is None else settings
+        tts_settings = settings.get("tts", {})
+        if str(tts_settings.get("response_mode", "fast")) != "fast":
+            return False
+        if not bool(tts_settings.get("ack_sound_enabled", True)):
+            return False
+
+        audio_settings = settings.get("audio", {})
+        output_device, output_sample_rate = _resolve_audio_device("output", audio_settings.get("output_device"))
+        if output_device is None:
+            logger.warning("Fast feedback skipped: no output device available.")
+            return False
+
+        sample_rate = output_sample_rate or SAMPLE_RATE
+        output_volume = _bounded_float(audio_settings.get("output_volume"), 1.0, 0.0, 2.0)
+        ack_volume = _bounded_float(tts_settings.get("ack_sound_volume"), 0.25, 0.0, 1.0)
+        player = _ContinuousPcmPlayer(output_device, sample_rate, output_volume)
+        self._active_player = player
+        try:
+            await asyncio.to_thread(player.put, _ack_tone(sample_rate, ack_volume))
+            player.finish()
+            await asyncio.to_thread(player.run)
+            return True
+        except Exception:
+            logger.exception("Fast feedback sound failed.")
+            return False
+        finally:
+            if self._active_player is player:
+                self._active_player = None
 
     def pause_hands_free(self, seconds: float = 0.5, replace: bool = False) -> None:
         if self._hands_free_stream is None:
@@ -982,6 +1074,7 @@ class VoicePipeline:
         player = _ContinuousPcmPlayer(output_device, output_sample_rate, output_volume)
         player.on_playback_start = mark_playback_start
         self._active_player = player
+        chunk_config = tts_chunk_config()
         tts_queue: asyncio.Queue[str | None] = asyncio.Queue()
         synth_task = asyncio.create_task(self._tts_synth_worker(tts_queue, player, on_first_chunk=mark_first_tts_chunk))
         player_task = asyncio.create_task(self._tts_audio_player(player))
@@ -1000,12 +1093,13 @@ class VoicePipeline:
                 chunks, sentence_buffer = _pop_sentence_chunks(
                     sentence_buffer,
                     first_chunk=tts_chunks_sent == 0,
+                    chunk_config=chunk_config,
                 )
                 for chunk in chunks:
                     await tts_queue.put(chunk)
                     tts_chunks_sent += 1
 
-            chunks, sentence_buffer = _pop_sentence_chunks(sentence_buffer, force=True)
+            chunks, sentence_buffer = _pop_sentence_chunks(sentence_buffer, force=True, chunk_config=chunk_config)
             for chunk in chunks:
                 await tts_queue.put(chunk)
                 tts_chunks_sent += 1

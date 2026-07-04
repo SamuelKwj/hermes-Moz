@@ -124,6 +124,19 @@ class ReleaseContractsTest(unittest.TestCase):
         self.assertIn("密钥错误", frontend_text)
         self.assertIn("last_turn_latency", server_text)
 
+    def test_settings_ui_exposes_fast_voice_feedback_controls(self):
+        frontend_text = (ROOT / "frontend" / "index.html").read_text(encoding="utf-8")
+        server_text = (ROOT / "backend" / "server.py").read_text(encoding="utf-8")
+        settings_text = (ROOT / "backend" / "settings.py").read_text(encoding="utf-8")
+
+        self.assertIn("ttsResponseMode", frontend_text)
+        self.assertIn("快速响应", frontend_text)
+        self.assertIn("ackSoundEnabled", frontend_text)
+        self.assertIn("提示音", frontend_text)
+        self.assertIn("response_mode", settings_text)
+        self.assertIn("fast_first_chunk_chars", settings_text)
+        self.assertIn("play_fast_feedback", server_text)
+
     def test_webview2_is_prompt_only_not_bundled(self):
         launcher_text = (ROOT / "launcher.py").read_text(encoding="utf-8")
         installer_text = (ROOT / "installer" / "inno" / "HermesVoice.iss").read_text(encoding="utf-8")

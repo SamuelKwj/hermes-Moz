@@ -429,6 +429,8 @@ async def websocket_endpoint(ws: WebSocket):
                         wake_prompt_task.cancel()
                     wake_prompt_task = asyncio.create_task(play_wake_prompt(generation))
 
+            if not hands_free_turn and generation == turn_generation:
+                await pipeline.play_fast_feedback(load_settings())
             result = await pipeline.run_turn_stream(wav_path, history, send_pipeline_event, require_wake=require_wake)
             if hands_free_turn and result and not result.get("ignored") and not result.get("wake_prompt"):
                 user_text = str(result.get("user", "")).strip()

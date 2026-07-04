@@ -79,6 +79,12 @@ DEFAULT_SETTINGS: dict[str, Any] = {
     },
     "tts": {
         "mode": "edge_mp3",
+        "response_mode": "fast",
+        "ack_sound_enabled": True,
+        "ack_sound_volume": 0.25,
+        "fast_first_chunk_chars": 12,
+        "fast_next_chunk_chars": 28,
+        "fast_max_chunk_chars": 70,
         "voice": "zh-CN-XiaoxiaoNeural",
         "native_voice": "Microsoft Huihui Desktop",
         "rate": "+0%",
