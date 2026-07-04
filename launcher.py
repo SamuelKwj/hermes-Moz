@@ -34,6 +34,7 @@ if BACKEND_DIR.exists():
 
 from app_runtime import configure_logging, configure_model_cache, get_icon_file, prepend_bundled_bin_to_path
 from settings import get_host, get_port, load_settings
+from port_utils import assert_port_available
 
 prepend_bundled_bin_to_path()
 configure_model_cache()
@@ -688,6 +689,12 @@ def main():
     host = get_host()
     port = get_port()
     settings = load_settings()
+    try:
+        assert_port_available(host, port, "hermes-voice-desktop")
+    except RuntimeError as exc:
+        logger.error("%s", exc)
+        _show_startup_error(str(exc))
+        return
 
     logger.info("Starting backend server...")
     server_thread = UvicornThread(host, port)
