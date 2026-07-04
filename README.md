@@ -133,9 +133,11 @@ dist\installer\HermesVoiceSetup.exe
 
 默认启用语音“快速响应”模式：
 
-- 松开录音后播放一个本地短提示音，确认系统已接收。
+- 松开录音后播放本地缓存短句“收到”；缓存未生成时用短提示音兜底。
+- LLM 首 token 等待超过阈值时播放缓存短句“稍等”。
 - 首段 TTS 更早开始合成，降低首次出声等待。
 - STT 识别方案不变，仍使用当前 faster-whisper 配置。
+- 常用短句缓存位于 `%LOCALAPPDATA%\HermesVoiceWidget\feedback_cache`。
 
 如需更稳的朗读节奏，可在设置页把“语音响应”切回“标准”。
 

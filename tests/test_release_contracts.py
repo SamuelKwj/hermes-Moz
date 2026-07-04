@@ -134,8 +134,14 @@ class ReleaseContractsTest(unittest.TestCase):
         self.assertIn("ackSoundEnabled", frontend_text)
         self.assertIn("提示音", frontend_text)
         self.assertIn("response_mode", settings_text)
+        self.assertIn("feedback_phrases_enabled", settings_text)
+        self.assertIn("feedback_ack_text", settings_text)
+        self.assertIn("feedback_wait_text", settings_text)
+        self.assertIn("收到", settings_text)
+        self.assertIn("稍等", settings_text)
         self.assertIn("fast_first_chunk_chars", settings_text)
         self.assertIn("play_fast_feedback", server_text)
+        self.assertIn("warm_fast_feedback_cache", server_text)
 
     def test_webview2_is_prompt_only_not_bundled(self):
         launcher_text = (ROOT / "launcher.py").read_text(encoding="utf-8")

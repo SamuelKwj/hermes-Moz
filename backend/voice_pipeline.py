@@ -2,10 +2,12 @@
 import asyncio
 from collections import deque
 from dataclasses import dataclass
+import hashlib
 import logging
 import os
 import queue
 import re
+import shutil
 import subprocess
 import tempfile
 import threading
@@ -19,6 +21,7 @@ import sounddevice as sd
 from stt_engine import transcribe
 from tts_engine import synthesize
 from hermes_client import HermesClient
+from app_runtime import get_app_dir
 from settings import load_settings
 from subprocess_utils import hidden_window_kwargs
 
@@ -37,6 +40,13 @@ MAX_TTS_CHARS = 80
 FAST_FIRST_TTS_MIN_CHARS = 12
 FAST_NEXT_TTS_MIN_CHARS = 28
 FAST_MAX_TTS_CHARS = 70
+FEEDBACK_PHRASE_KEYS = ("ack", "wait", "ready", "thinking")
+FEEDBACK_PHRASE_DEFAULTS = {
+    "ack": "收到。",
+    "wait": "稍等。",
+    "ready": "我在。",
+    "thinking": "正在想。",
+}
 _LAST_TURN_LATENCY: dict[str, int | None] | None = None
 
 
@@ -76,6 +86,71 @@ def _bounded_float(value, fallback: float, minimum: float, maximum: float) -> fl
     except (TypeError, ValueError):
         return fallback
     return max(minimum, min(maximum, numeric))
+
+
+def _feedback_cache_dir() -> Path:
+    return get_app_dir() / "feedback_cache"
+
+
+def _feedback_phrase_text(phrase_key: str, settings: dict) -> str:
+    tts_settings = settings.get("tts", {}) if isinstance(settings, dict) else {}
+    fallback = FEEDBACK_PHRASE_DEFAULTS.get(phrase_key, "")
+    return str(tts_settings.get(f"feedback_{phrase_key}_text", fallback) or fallback).strip()
+
+
+def _feedback_phrase_cache_path(phrase_key: str, settings: dict) -> Path:
+    tts_settings = settings.get("tts", {}) if isinstance(settings, dict) else {}
+    text = _feedback_phrase_text(phrase_key, settings)
+    fingerprint = "|".join(
+        [
+            phrase_key,
+            text,
+            str(tts_settings.get("mode", "edge_mp3")),
+            str(tts_settings.get("voice", "")),
+            str(tts_settings.get("native_voice", "")),
+            str(tts_settings.get("rate", "+0%")),
+            str(tts_settings.get("volume", "+0%")),
+        ]
+    )
+    digest = hashlib.sha1(fingerprint.encode("utf-8")).hexdigest()[:12]
+    return _feedback_cache_dir() / f"{phrase_key}-{digest}.audio"
+
+
+async def ensure_feedback_phrase_cached(phrase_key: str, settings: dict | None = None) -> Path:
+    settings = load_settings() if settings is None else settings
+    text = _feedback_phrase_text(phrase_key, settings)
+    if not text:
+        raise ValueError(f"Feedback phrase is empty: {phrase_key}")
+
+    cache_path = _feedback_phrase_cache_path(phrase_key, settings)
+    if cache_path.exists():
+        return cache_path
+
+    cache_path.parent.mkdir(parents=True, exist_ok=True)
+    temp_path = await synthesize(text)
+    try:
+        shutil.copyfile(temp_path, cache_path)
+        return cache_path
+    finally:
+        try:
+            os.unlink(temp_path)
+        except OSError:
+            pass
+
+
+async def warm_fast_feedback_cache(settings: dict | None = None) -> None:
+    settings = load_settings() if settings is None else settings
+    tts_settings = settings.get("tts", {}) if isinstance(settings, dict) else {}
+    if str(tts_settings.get("response_mode", "fast")) != "fast":
+        return
+    if not bool(tts_settings.get("feedback_phrases_enabled", True)):
+        return
+
+    for phrase_key in FEEDBACK_PHRASE_KEYS:
+        try:
+            await ensure_feedback_phrase_cached(phrase_key, settings)
+        except Exception:
+            logger.exception("Feedback phrase cache warmup failed: %s", phrase_key)
 
 
 def reset_last_turn_latency() -> None:
@@ -710,6 +785,16 @@ class VoicePipeline:
         if player is not None:
             player.stop()
 
+    async def _play_cached_feedback_phrase(self, phrase_key: str, settings: dict) -> bool:
+        if not bool(settings.get("tts", {}).get("feedback_phrases_enabled", True)):
+            return False
+        path = _feedback_phrase_cache_path(phrase_key, settings)
+        if not path.exists():
+            asyncio.create_task(warm_fast_feedback_cache(settings))
+            return False
+        await self._play_audio(path)
+        return True
+
     async def play_fast_feedback(self, settings: dict | None = None) -> bool:
         settings = load_settings() if settings is None else settings
         tts_settings = settings.get("tts", {})
@@ -717,6 +802,8 @@ class VoicePipeline:
             return False
         if not bool(tts_settings.get("ack_sound_enabled", True)):
             return False
+        if await self._play_cached_feedback_phrase("ack", settings):
+            return True
 
         audio_settings = settings.get("audio", {})
         output_device, output_sample_rate = _resolve_audio_device("output", audio_settings.get("output_device"))
@@ -740,6 +827,34 @@ class VoicePipeline:
         finally:
             if self._active_player is player:
                 self._active_player = None
+
+    async def _enqueue_cached_feedback_phrase(self, phrase_key: str, settings: dict, player: _ContinuousPcmPlayer) -> bool:
+        if not bool(settings.get("tts", {}).get("feedback_phrases_enabled", True)):
+            return False
+        path = _feedback_phrase_cache_path(phrase_key, settings)
+        if not path.exists():
+            asyncio.create_task(warm_fast_feedback_cache(settings))
+            return False
+        pcm = await asyncio.to_thread(_decode_audio_file, str(path), player.sample_rate)
+        await asyncio.to_thread(player.put, pcm)
+        return True
+
+    async def _play_wait_feedback_after_delay(
+        self,
+        settings: dict,
+        player: _ContinuousPcmPlayer,
+        should_play,
+        due_event: asyncio.Event | None = None,
+    ) -> None:
+        tts_settings = settings.get("tts", {})
+        if str(tts_settings.get("response_mode", "fast")) != "fast":
+            return
+        delay_ms = _bounded_float(tts_settings.get("feedback_wait_delay_ms"), 800.0, 0.0, 5000.0)
+        await asyncio.sleep(delay_ms / 1000.0)
+        if due_event is not None:
+            due_event.set()
+        if should_play():
+            await self._enqueue_cached_feedback_phrase("wait", settings, player)
 
     def pause_hands_free(self, seconds: float = 0.5, replace: bool = False) -> None:
         if self._hands_free_stream is None:
@@ -1074,10 +1189,20 @@ class VoicePipeline:
         player = _ContinuousPcmPlayer(output_device, output_sample_rate, output_volume)
         player.on_playback_start = mark_playback_start
         self._active_player = player
-        chunk_config = tts_chunk_config()
+        settings = load_settings()
+        chunk_config = tts_chunk_config(settings)
         tts_queue: asyncio.Queue[str | None] = asyncio.Queue()
         synth_task = asyncio.create_task(self._tts_synth_worker(tts_queue, player, on_first_chunk=mark_first_tts_chunk))
         player_task = asyncio.create_task(self._tts_audio_player(player))
+        wait_feedback_due = asyncio.Event()
+        wait_feedback_task = asyncio.create_task(
+            self._play_wait_feedback_after_delay(
+                settings,
+                player,
+                lambda: llm_first_token_at is None,
+                wait_feedback_due,
+            )
+        )
         reply_parts: list[str] = []
         sentence_buffer = ""
         tts_chunks_sent = 0
@@ -1085,6 +1210,11 @@ class VoicePipeline:
         try:
             async for delta in self.hermes.chat_stream(text, history):
                 if delta:
+                    if not wait_feedback_task.done():
+                        if wait_feedback_due.is_set():
+                            await asyncio.gather(wait_feedback_task, return_exceptions=True)
+                        else:
+                            wait_feedback_task.cancel()
                     mark_first_token()
                 reply_parts.append(delta)
                 sentence_buffer += delta
@@ -1110,6 +1240,9 @@ class VoicePipeline:
             await tts_queue.put(None)
             await synth_task
             await player_task
+            if not wait_feedback_task.done():
+                wait_feedback_task.cancel()
+            await asyncio.gather(wait_feedback_task, return_exceptions=True)
             _record_last_turn_latency(
                 turn_started_at,
                 stt_done_at,
@@ -1123,13 +1256,15 @@ class VoicePipeline:
             player.stop()
             synth_task.cancel()
             player_task.cancel()
-            await asyncio.gather(synth_task, player_task, return_exceptions=True)
+            wait_feedback_task.cancel()
+            await asyncio.gather(synth_task, player_task, wait_feedback_task, return_exceptions=True)
             raise
         except Exception:
             player.stop()
             synth_task.cancel()
             player_task.cancel()
-            await asyncio.gather(synth_task, player_task, return_exceptions=True)
+            wait_feedback_task.cancel()
+            await asyncio.gather(synth_task, player_task, wait_feedback_task, return_exceptions=True)
             raise
         finally:
             if self._active_player is player:

@@ -1,8 +1,12 @@
 import asyncio
+import os
 import sys
+import tempfile
 from pathlib import Path
 from unittest import TestCase, main
 from unittest.mock import patch
+
+import numpy as np
 
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -11,6 +15,13 @@ sys.path.insert(0, str(BACKEND))
 
 import voice_pipeline  # noqa: E402
 from voice_pipeline import VoicePipeline  # noqa: E402
+
+
+class SlowHermes:
+    async def chat_stream(self, text, history):
+        await asyncio.sleep(0.01)
+        yield "你好"
+        yield "。"
 
 
 class FakeContinuousPcmPlayer:
@@ -36,6 +47,13 @@ class FakeContinuousPcmPlayer:
 
     def stop(self):
         pass
+
+
+async def fake_synthesize_file(_text):
+    fd, path = tempfile.mkstemp(suffix=".mp3", prefix="feedback_test_")
+    os.close(fd)
+    Path(path).write_bytes(b"audio")
+    return path
 
 
 class VoicePipelineFastFeedbackTest(TestCase):
@@ -99,6 +117,93 @@ class VoicePipelineFastFeedbackTest(TestCase):
 
         self.assertFalse(played)
         self.assertEqual(FakeContinuousPcmPlayer.instances, [])
+
+    def test_feedback_phrase_cache_reuses_generated_audio(self):
+        synth_calls = []
+        settings = {"tts": {"mode": "edge_mp3", "voice": "voice-a", "feedback_ack_text": "收到。"}}
+
+        async def synthesize_once(text):
+            synth_calls.append(text)
+            return await fake_synthesize_file(text)
+
+        with tempfile.TemporaryDirectory() as tmpdir:
+            with (
+                patch.object(voice_pipeline, "get_app_dir", return_value=Path(tmpdir)),
+                patch.object(voice_pipeline, "synthesize", synthesize_once),
+            ):
+                first = asyncio.run(voice_pipeline.ensure_feedback_phrase_cached("ack", settings))
+                second = asyncio.run(voice_pipeline.ensure_feedback_phrase_cached("ack", settings))
+
+                self.assertEqual(first, second)
+                self.assertTrue(first.exists())
+                self.assertEqual(synth_calls, ["收到。"])
+
+    def test_fast_feedback_prefers_cached_ack_phrase(self):
+        pipeline = VoicePipeline.__new__(VoicePipeline)
+        played_paths = []
+        settings = {
+            "audio": {"output_device": 3, "output_volume": 1.0},
+            "tts": {
+                "response_mode": "fast",
+                "ack_sound_enabled": True,
+                "feedback_phrases_enabled": True,
+                "feedback_ack_text": "收到。",
+            },
+        }
+
+        async def fake_play_audio(path):
+            played_paths.append(path)
+
+        with tempfile.TemporaryDirectory() as tmpdir:
+            with (
+                patch.object(voice_pipeline, "get_app_dir", return_value=Path(tmpdir)),
+                patch.object(voice_pipeline, "synthesize", fake_synthesize_file),
+            ):
+                cached = asyncio.run(voice_pipeline.ensure_feedback_phrase_cached("ack", settings))
+                with patch.object(pipeline, "_play_audio", fake_play_audio):
+                    played = asyncio.run(pipeline.play_fast_feedback(settings))
+
+        self.assertTrue(played)
+        self.assertEqual(played_paths, [cached])
+        self.assertEqual(FakeContinuousPcmPlayer.instances, [])
+
+    def test_slow_llm_enqueues_wait_phrase_before_assistant_audio(self):
+        pipeline = VoicePipeline.__new__(VoicePipeline)
+        pipeline.hermes = SlowHermes()
+        pipeline._active_player = None
+        pipeline._playback_settings = lambda: (None, 16000, 1.0)
+        events = []
+        settings = {
+            "tts": {
+                "response_mode": "fast",
+                "feedback_phrases_enabled": True,
+                "feedback_wait_text": "稍等。",
+                "feedback_wait_delay_ms": 0,
+            }
+        }
+
+        async def on_event(event):
+            events.append(event)
+
+        def fake_decode(path, _sample_rate):
+            if "wait" in str(path):
+                return np.array([2.0], dtype=np.float32)
+            return np.array([1.0], dtype=np.float32)
+
+        with tempfile.TemporaryDirectory() as tmpdir:
+            with (
+                patch.object(voice_pipeline, "get_app_dir", return_value=Path(tmpdir)),
+                patch.object(voice_pipeline, "load_settings", return_value=settings),
+                patch.object(voice_pipeline, "synthesize", fake_synthesize_file),
+                patch.object(voice_pipeline, "_decode_audio_file", fake_decode),
+                patch.object(voice_pipeline, "_ContinuousPcmPlayer", FakeContinuousPcmPlayer),
+            ):
+                asyncio.run(voice_pipeline.ensure_feedback_phrase_cached("wait", settings))
+                result = asyncio.run(VoicePipeline._run_llm_tts_stream(pipeline, "测试", [], on_event))
+
+        self.assertEqual(result, {"user": "测试", "assistant": "你好。"})
+        self.assertEqual(FakeContinuousPcmPlayer.instances[0].items[0].tolist(), [2.0])
+        self.assertIn({"type": "assistant_done", "assistant": "你好。"}, events)
 
 
 if __name__ == "__main__":

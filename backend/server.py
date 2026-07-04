@@ -18,7 +18,7 @@ from app_runtime import (
     get_frontend_index,
     prepend_bundled_bin_to_path,
 )
-from voice_pipeline import VoicePipeline, last_turn_latency
+from voice_pipeline import VoicePipeline, last_turn_latency, warm_fast_feedback_cache
 from tts_engine import synthesize
 from settings import PERFORMANCE_PROFILES, get_host, get_port, load_settings, patch_settings
 from system_checks import accelerator_status, dependency_status, hermes_status, list_audio_devices, runtime_status
@@ -71,6 +71,7 @@ async def _warm_tts_engine():
             os.unlink(path)
         except OSError:
             pass
+        await warm_fast_feedback_cache(load_settings())
         _tts_ready = True
         logger.info("TTS engine ready.")
     except Exception:
