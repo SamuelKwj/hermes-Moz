@@ -98,7 +98,7 @@ DEFAULT_SETTINGS: dict[str, Any] = {
     },
     "hermes": {
         "base_url": "http://127.0.0.1:8642",
-        "api_key": "bridge-secret-key",
+        "api_key": "",
         "model": "hermes",
         "max_tokens": 300,
         "temperature": 0.7,

@@ -17,7 +17,7 @@ DeepSeek V4 Pro 模型行为严谨：请求中没看到 `tools` 定义就不会�
 
 ## 修改内容
 
-**文件：** `D:\project\voice_desktop\backend\hermes_client.py`
+**文件：** `backend/hermes_client.py`
 
 ### 1. 新增 `HERMES_TOOLS` 常量（第17-90行）
 

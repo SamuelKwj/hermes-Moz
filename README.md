@@ -13,7 +13,7 @@
 - Windows 10/11
 - Python 3.11+
 - 源码运行需要 ffmpeg 已加入 PATH；发布构建会从 PATH 复制 `ffmpeg.exe` / `ffplay.exe` 到本地 `bin\` 并打进安装包
-- Hermes Gateway 运行在 `http://127.0.0.1:8642`，默认密钥 `bridge-secret-key`
+- Hermes Gateway 运行在 `http://127.0.0.1:8642`，默认不设置密钥；如 Gateway 启用鉴权，请显式配置 API_SERVER_KEY
 
 ## 端口约定
 
@@ -123,7 +123,7 @@ dist\installer\HermesVoiceSetup.exe
 - `VOICE_WIDGET_HOST`: 默认 `127.0.0.1`
 - `VOICE_WIDGET_PORT`: 默认 `8765`
 - `HERMES_GATEWAY_URL`: 默认 `http://127.0.0.1:8642`
-- `API_SERVER_KEY`: 默认 `bridge-secret-key`
+- `API_SERVER_KEY`: 默认空值；仅在 Gateway 启用鉴权时配置
 - `VOICE_STT_MODEL`: 默认 `base`
 - `VOICE_STT_LANG`: 默认 `zh`
 - `VOICE_USE_CUDA`: 设为 `1` 时使用 CUDA
