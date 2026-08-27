@@ -134,7 +134,7 @@ async def hermes_status(settings: dict[str, Any]) -> dict[str, Any]:
 
     hermes_settings = settings["hermes"]
     base_url = str(hermes_settings.get("base_url", "http://127.0.0.1:8642")).rstrip("/")
-    api_key = str(hermes_settings.get("api_key", "bridge-secret-key"))
+    api_key = str(hermes_settings.get("api_key", ""))
     configured_model = str(hermes_settings.get("model", "hermes"))
     result: dict[str, Any] = {
         "base_url": base_url,
