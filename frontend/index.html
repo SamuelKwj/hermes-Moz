@@ -1068,7 +1068,7 @@ function renderSettings() {
   renderTtsModeOptions();
   renderTtsResponseModeOptions();
   $("hermesBaseUrl").value = hermes.base_url || "http://127.0.0.1:8642";
-  $("hermesApiKey").value = hermes.api_key || "bridge-secret-key";
+  $("hermesApiKey").value = hermes.api_key || "";
   $("hermesModel").value = hermes.model || "hermes";
   $("hermesMaxTokens").value = hermes.max_tokens || 300;
   $("hermesTemperature").value = hermes.temperature || 0.7;
@@ -1408,7 +1408,7 @@ function readSettingsForm(applyProfile) {
     },
     hermes: {
       base_url: $("hermesBaseUrl").value.trim() || "http://127.0.0.1:8642",
-      api_key: $("hermesApiKey").value.trim() || "bridge-secret-key",
+      api_key: $("hermesApiKey").value.trim(),
       model: $("hermesModel").value.trim() || "hermes",
       max_tokens: numberValue("hermesMaxTokens", 300),
       temperature: numberValue("hermesTemperature", 0.7)
