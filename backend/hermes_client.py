@@ -10,7 +10,7 @@ import httpx
 logger = logging.getLogger(__name__)
 
 DEFAULT_HERMES_BASE = "http://127.0.0.1:8642"
-DEFAULT_API_KEY = "bridge-secret-key"
+DEFAULT_API_KEY = ""
 DEFAULT_HERMES_MODEL = "hermes"
 HERMES_BASE = os.getenv("HERMES_GATEWAY_URL", DEFAULT_HERMES_BASE)
 API_KEY = os.getenv("API_SERVER_KEY", DEFAULT_API_KEY)
@@ -145,7 +145,8 @@ def gateway_config() -> dict[str, Any]:
 
 
 def auth_headers(api_key: str) -> dict[str, str]:
-    return {"Authorization": f"Bearer {api_key}"}
+    key = str(api_key or "").strip()
+    return {"Authorization": f"Bearer {key}"} if key else {}
 
 
 class HermesClient:
